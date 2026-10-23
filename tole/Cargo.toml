@@ -16,6 +16,9 @@ path = "src/lib.rs"
 compositor-text = { path = "../../compositor/text" }
 # What a frame is drawn with. The same exact pin as compositor-render and
 # compositor-text, for the same reason; the default features stay off.
+# The PNG writer's deflate: pure Rust, MIT, zlib or Apache-2.0, already in
+# the compositor's tree through its image decoders.
+miniz_oxide = { version = "0.8.9", default-features = false, features = ["with-alloc"] }
 tiny-skia = { version = "=0.12.0", default-features = false, features = ["std", "simd"] }
 
 [lints]

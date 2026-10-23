@@ -1,0 +1,22 @@
+// The smallest program: a card with two lines of text, centred.
+import Fx
+
+component Hello : Rectangle {
+    width: 360; height: 160
+    color: "#fafaf8"
+
+    Rectangle {
+        anchors.fill: parent
+        anchors.margins: 16
+        radius: 12
+        color: "white"
+        border { width: 1; color: "#e6e6e2" }
+
+        Column {
+            anchors.centerIn: parent
+            spacing: 6
+            Text { text: "Hello from tole"; font: font("Inter", 22, 600); color: "#1a1a1a" }
+            Text { text: "a .tole file, compiled into Rust"; font: font("Inter", 13, 400); color: "#888888" }
+        }
+    }
+}

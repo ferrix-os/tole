@@ -1,0 +1,43 @@
+// Anchors, a Row and a Column: every place here is a binding, so resizing
+// the window moves everything with it.
+import Fx
+
+component Swatch : Rectangle {
+    property string label
+    width: 64; height: 40
+    radius: 6
+    Text {
+        anchors.centerIn: parent
+        text: label
+        font: font("Inter", 12, 500)
+        color: "white"
+    }
+}
+
+component Layouts : Rectangle {
+    width: 480; height: 300
+    color: "#fafaf8"
+
+    // A corner each, anchored to the window.
+    Swatch { label: "left"; color: "#2a62c9"; anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 12 }
+    Swatch { label: "right"; color: "#2fa35a"; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 12 }
+    Swatch { id: middle; label: "centre"; color: "#d2382b"; anchors.centerIn: parent }
+    // Beside the middle one, its right edge on the middle's left edge.
+    Swatch { label: "beside"; color: "#e9a91c"; anchors.right: middle.left; anchors.rightMargin: 8; anchors.verticalCenter: middle.verticalCenter }
+
+    Row {
+        anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: 12
+        spacing: 6
+        Swatch { label: "Row"; color: "#555555"; width: 48 }
+        Swatch { label: "of"; color: "#777777"; width: 36 }
+        Swatch { label: "three"; color: "#999999"; width: 56 }
+    }
+
+    Column {
+        anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 12
+        spacing: 4
+        Swatch { label: "a"; color: "#7ea6f5"; height: 22 }
+        Swatch { label: "Column"; color: "#2a62c9"; height: 22 }
+        Swatch { label: "${2 + 1} high"; color: "#14306a"; height: 22 }
+    }
+}

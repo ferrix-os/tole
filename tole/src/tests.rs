@@ -451,14 +451,14 @@ fn a_frame_is_a_png() {
     assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
     assert_eq!(&png[12..16], b"IHDR");
     assert_eq!(&png[png.len() - 8..png.len() - 4], b"IEND");
-    // The image data: three pixels a row, each after a filter byte.
-    let data_start = png.windows(4).position(|w| w == b"IDAT").unwrap() + 4 + 2 + 5;
-    assert_eq!(png[data_start], 0, "filter byte");
-    assert_eq!(
-        &png[data_start + 1..data_start + 5],
-        &[255, 0, 0, 128],
-        "straight alpha again"
-    );
+    // The image data, inflated: three pixels a row, each row after a
+    // filter byte.
+    let at = png.windows(4).position(|w| w == b"IDAT").unwrap();
+    let len = u32::from_be_bytes(png[at - 4..at].try_into().unwrap()) as usize;
+    let raw = miniz_oxide::inflate::decompress_to_vec_zlib(&png[at + 4..at + 4 + len]).unwrap();
+    assert_eq!(raw.len(), 2 * (1 + 3 * 4));
+    assert_eq!(raw[0], 0, "filter byte");
+    assert_eq!(&raw[1..5], &[255, 0, 0, 128], "straight alpha again");
 }
 
 #[test]

@@ -1,6 +1,5 @@
-//! A pixmap as a PNG: eight-bit RGBA, unpremultiplied, the image data in
-//! stored (uncompressed) deflate blocks. Large but exact, and enough for
-//! tests and `--render`; no codec crate is pulled in for it.
+//! A pixmap as a PNG: eight-bit RGBA, unpremultiplied, no filter, the
+//! image data deflated by `miniz_oxide`.
 
 /// `pixels` (premultiplied RGBA, `width` × `height`) as a PNG file.
 #[must_use]
@@ -15,19 +14,7 @@ pub fn encode(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
             }
         }
     }
-    let mut zlib = vec![0x78, 0x01];
-    let mut blocks = raw.chunks(0xffff).peekable();
-    if blocks.peek().is_none() {
-        zlib.extend([1, 0, 0, 0xff, 0xff]);
-    }
-    while let Some(block) = blocks.next() {
-        zlib.push(u8::from(blocks.peek().is_none()));
-        let len = block.len() as u16;
-        zlib.extend(len.to_le_bytes());
-        zlib.extend((!len).to_le_bytes());
-        zlib.extend_from_slice(block);
-    }
-    zlib.extend(adler32(&raw).to_be_bytes());
+    let zlib = miniz_oxide::deflate::compress_to_vec_zlib(&raw, 6);
 
     let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
     let mut header = Vec::with_capacity(13);
@@ -67,18 +54,4 @@ fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
         }
     }
     out.extend((!crc).to_be_bytes());
-}
-
-/// zlib's checksum.
-fn adler32(data: &[u8]) -> u32 {
-    let (mut a, mut b) = (1_u32, 0_u32);
-    for chunk in data.chunks(5552) {
-        for &byte in chunk {
-            a += u32::from(byte);
-            b += a;
-        }
-        a %= 65521;
-        b %= 65521;
-    }
-    (b << 16) | a
 }
