@@ -681,3 +681,132 @@ fn a_handler_emitting_itself_stops() {
     ui.emit(said, Vec::new());
     assert_eq!(ui.take_signals().len(), 64);
 }
+
+/// A small scene for the damage tests: a white root, a box and a label
+/// in a clipped column.
+fn damage_scene(
+    ui: &mut Ui,
+) -> (
+    crate::handles::Rectangle,
+    crate::handles::Rectangle,
+    crate::handles::Text,
+) {
+    let root = crate::handles::Rectangle::new(ui, None).unwrap();
+    root.common.width.set(ui, 200.0);
+    root.common.height.set(ui, 120.0);
+    let boxed = crate::handles::Rectangle::new(ui, Some(root.id)).unwrap();
+    boxed.common.x.set(ui, 10.0);
+    boxed.common.y.set(ui, 10.0);
+    boxed.common.width.set(ui, 40.0);
+    boxed.common.height.set(ui, 30.0);
+    boxed.props.radius.set(ui, 6.0);
+    boxed.props.color.set(ui, Color::hex(0x2a_62_c9));
+    let column = crate::handles::Column::new(ui, Some(root.id)).unwrap();
+    column.common.x.set(ui, 70.0);
+    column.common.y.set(ui, 20.0);
+    column.common.clip.set(ui, true);
+    let label = crate::handles::Text::new(ui, Some(column.id)).unwrap();
+    label.props.font.set(ui, inter(14.0));
+    label.props.color.set(ui, Color::hex(0x1a_1a_1a));
+    label.props.text.set(ui, Rc::from("damage"));
+    (root, boxed, label)
+}
+
+/// A change made to a scene.
+type Step = Box<dyn Fn(&mut Ui)>;
+
+#[test]
+fn a_kept_frame_redraws_only_what_changed_and_matches_a_whole_one() {
+    let mut ui = ui();
+    ui.set_scale(2.0);
+    let (root, boxed, label) = damage_scene(&mut ui);
+    let mut frame = crate::Frame::new((200, 120), 2.0, Color::hex(0xff_ff_ff)).unwrap();
+    assert_eq!(
+        ui.render_into(&mut frame),
+        [(0, 0, 400, 240)],
+        "the first draw is whole"
+    );
+    assert!(
+        ui.render_into(&mut frame).is_empty(),
+        "nothing changed, nothing drawn"
+    );
+
+    // One box's colour: its place, a pixel round it, and nothing else.
+    boxed.props.color.set(&mut ui, Color::hex(0xd2_38_2b));
+    let damage = ui.render_into(&mut frame);
+    assert_eq!(
+        damage,
+        [(18, 18, 84, 64)],
+        "the box at scale 2, a logical pixel round it"
+    );
+
+    // A sequence of changes; after each, the kept frame must be what a
+    // whole frame of the same scene is.
+    let steps: Vec<Step> = vec![
+        Box::new(move |ui| boxed.common.x.set(ui, 120.0)),
+        Box::new(move |ui| label.props.text.set(ui, Rc::from("a longer label now"))),
+        Box::new(move |ui| boxed.common.visible.set(ui, false)),
+        Box::new(move |ui| boxed.common.visible.set(ui, true)),
+        Box::new(move |ui| boxed.common.opacity.set(ui, 0.5)),
+        Box::new(move |ui| {
+            let extra = crate::handles::Rectangle::new(ui, Some(root.id)).unwrap();
+            extra.common.width.set(ui, 30.0);
+            extra.common.height.set(ui, 30.0);
+            extra.props.color.set(ui, Color::hex(0x2f_a3_5a));
+        }),
+        Box::new(move |ui| ui.destroy(boxed.id)),
+    ];
+    for (index, step) in steps.iter().enumerate() {
+        step(&mut ui);
+        let damage = ui.render_into(&mut frame);
+        assert!(!damage.is_empty(), "step {index} damaged something");
+        let whole = ui.render((200, 120), Color::hex(0xff_ff_ff)).unwrap();
+        let differing = whole
+            .data()
+            .chunks_exact(4)
+            .zip(frame.pixmap().data().chunks_exact(4))
+            .filter(|(a, b)| a != b)
+            .count();
+        assert_eq!(
+            differing, 0,
+            "step {index}: the kept frame differs from a whole one in {differing} pixels"
+        );
+    }
+}
+
+#[test]
+fn a_kept_frame_matches_a_whole_one_as_a_rounded_box_wanders() {
+    for scale in [1.0, 1.5, 2.0] {
+        let mut ui = ui();
+        ui.set_scale(scale);
+        let (_, boxed, label) = damage_scene(&mut ui);
+        boxed.props.radius.set(&mut ui, 11.0);
+        boxed.props.border_width.set(&mut ui, 1.5);
+        boxed
+            .props
+            .border_color
+            .set(&mut ui, Color::hex(0x1a_1a_1a));
+        let mut frame = crate::Frame::new((200, 120), scale, Color::hex(0xff_ff_ff)).unwrap();
+        let _ = ui.render_into(&mut frame);
+        for step in 0..40_u16 {
+            let t = f32::from(step);
+            boxed.common.x.set(&mut ui, (t * 7.3) % 170.0);
+            boxed.common.y.set(&mut ui, (t * 4.1) % 95.0);
+            if step % 5 == 0 {
+                label
+                    .props
+                    .text
+                    .set(&mut ui, Rc::from(format!("step {step}")));
+            }
+            let _ = ui.render_into(&mut frame);
+            let whole = ui.render((200, 120), Color::hex(0xff_ff_ff)).unwrap();
+            let worst = whole
+                .data()
+                .iter()
+                .zip(frame.pixmap().data())
+                .map(|(a, b)| a.abs_diff(*b))
+                .max();
+            assert_eq!(worst, Some(0), "scale {scale}, step {step}");
+        }
+    }
+}

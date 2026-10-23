@@ -162,15 +162,20 @@ pub fn play(ops: &[DrawOp], renderer: &mut dyn Renderer) {
 impl Ui {
     /// The whole tree as drawing operations, roots in the order made.
     pub fn scene(&mut self) -> Vec<DrawOp> {
-        let mut ops = Vec::new();
+        self.scene_with_items().ops
+    }
+
+    /// The scene, and which of its operations each item drew.
+    pub(crate) fn scene_with_items(&mut self) -> crate::damage::Scene {
+        let mut scene = crate::damage::Scene::default();
         for root in self.roots.clone() {
-            self.scene_of(root, (0.0, 0.0), &mut ops);
+            self.scene_of(root, (0.0, 0.0), &mut scene);
         }
-        ops
+        scene
     }
 
     /// `item` and its children, its parent's origin at `origin`.
-    fn scene_of(&mut self, item: ItemId, origin: (f32, f32), ops: &mut Vec<DrawOp>) {
+    fn scene_of(&mut self, item: ItemId, origin: (f32, f32), scene: &mut crate::damage::Scene) {
         let Some(common) = self.common(item) else {
             return;
         };
@@ -186,8 +191,11 @@ impl Ui {
         );
         let grouped = opacity < 1.0;
         if grouped {
-            ops.push(DrawOp::PushOpacity(opacity));
+            scene.ops.push(DrawOp::PushOpacity(opacity));
+            scene.opacity.push(opacity);
         }
+        let start = scene.ops.len();
+        let ops = &mut scene.ops;
         match self.kind(item) {
             Some(Kind::Rectangle(props)) => {
                 let radius = self.get(props.radius);
@@ -213,18 +221,23 @@ impl Ui {
             Some(Kind::Text(props)) => self.text_op(props, place, ops),
             _ => {}
         }
+        let scale = self.scale();
+        scene.record(item, start, scale);
         let clipped = self.get(common.clip);
         if clipped {
-            ops.push(DrawOp::PushClip(place));
+            scene.ops.push(DrawOp::PushClip(place));
+            scene.push_clip(place);
         }
         for child in self.children(item).to_vec() {
-            self.scene_of(child, (place.x, place.y), ops);
+            self.scene_of(child, (place.x, place.y), scene);
         }
         if clipped {
-            ops.push(DrawOp::PopClip);
+            scene.ops.push(DrawOp::PopClip);
+            let _ = scene.clips.pop();
         }
         if grouped {
-            ops.push(DrawOp::PopOpacity);
+            scene.ops.push(DrawOp::PopOpacity);
+            let _ = scene.opacity.pop();
         }
     }
 
