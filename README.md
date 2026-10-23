@@ -794,6 +794,113 @@ key file:
 
 ![file chooser](docs/screenshots/file-chooser.png)
 
+### Charts and shapes
+
+A `Canvas` is painted by a Rust function the program gives it, handed a
+`Painter` in the canvas's own coordinates (rectangles, paths, lines,
+text): charts are loops over data, which is Rust's work. A `Shape` holds
+fixed figures written in the markup, `ShapePath`s of `PathLine`,
+`PathQuad` and `PathCubic` with a fill and a stroke, bound like any
+property.
+
+```qml
+// Charts as Canvas painters, which are Rust functions over the data:
+// a histogram, a sparkline and an area. And fixed figures as Shapes,
+// written here: a play triangle, a check mark, a skip mark.
+import Fx
+import Fx.Controls
+
+component Charts : Rectangle {
+    property painter histogram
+    property painter sparkline
+    property painter area
+    width: 700; height: 330
+    color: Theme.bg2
+
+    Row {
+        x: 20; y: 20
+        spacing: 16
+        GroupBox {
+            title: "RECORDS PER MINUTE"
+            Canvas { width: 300; height: 150; painter: histogram }
+            Label { text: "14,213 records in the last hour"; color: Theme.ink4 }
+        }
+        Column {
+            spacing: 16
+            GroupBox {
+                title: "ERRORS, LAST HOUR"
+                Row {
+                    spacing: 12
+                    Canvas { width: 180; height: 36; painter: sparkline }
+                    Label { text: "3 / min"; font: Theme.sans(15, 600); anchors.verticalCenter: parent.verticalCenter }
+                }
+            }
+            GroupBox {
+                title: "MEMORY IN USE"
+                Canvas { width: 268; height: 80; painter: area }
+            }
+        }
+    }
+
+    Row {
+        x: 20; y: 280
+        spacing: 20
+        Shape {
+            // The boot picker's triangle.
+            ShapePath {
+                fillColor: Theme.accent
+                strokeColor: "transparent"
+                startX: 0; startY: 0
+                PathLine { x: 18; y: 10 }
+                PathLine { x: 0; y: 20 }
+                closed: true
+            }
+        }
+        Shape {
+            ShapePath {
+                strokeColor: Theme.green
+                strokeWidth: 3
+                startX: 2; startY: 11
+                PathLine { x: 8; y: 17 }
+                PathLine { x: 20; y: 3 }
+            }
+        }
+        Shape {
+            // A skip mark: two chevrons, the second a curve.
+            ShapePath {
+                strokeColor: Theme.ink3
+                strokeWidth: 2
+                startX: 2; startY: 2
+                PathLine { x: 10; y: 10 }
+                PathLine { x: 2; y: 18 }
+            }
+            ShapePath {
+                strokeColor: Theme.ink3
+                strokeWidth: 2
+                startX: 12; startY: 2
+                PathQuad { controlX: 24; controlY: 10; x: 12; y: 18 }
+            }
+        }
+    }
+}
+```
+
+```rust
+let root = Charts::new(&mut ui, None)?;
+root.sparkline.set(&mut ui, tole::CanvasPainter::new(move |p| {
+    let (w, h) = p.size();
+    let mut path = tole::Path::new();
+    for (i, v) in errors.iter().enumerate() {
+        let (x, y) = (w * i as f32 / (errors.len() - 1) as f32, h - 2.0 - (h - 4.0) * v);
+        let _ = if i == 0 { path.move_to(x, y) } else { path.line_to(x, y) };
+    }
+    p.path(&path, tole::Color::TRANSPARENT, red, 1.5);
+}));
+// When the data changes: ui.update_canvas(canvas_item);
+```
+
+![charts](docs/screenshots/charts.png)
+
 ### In a window
 
 Every demo also runs in a window on the Wayland desktop it is started
@@ -811,8 +918,8 @@ alone are drawn and handed to the compositor. A test holds the kept
 frame to what drawing the whole scene gives, pixel for pixel, as a
 rounded box wanders at scales 1, 1.5 and 2.
 
-More come as the framework reaches them: a chart, and the lode viewer
-ported onto tole.
+More come as the framework reaches them: the lode viewer ported onto
+tole.
 
 ## Crates
 

@@ -31,6 +31,7 @@ pub mod png;
 mod popup;
 mod render;
 mod repeater;
+mod shape;
 mod signal;
 mod split;
 mod text;
@@ -48,9 +49,9 @@ pub use folder::{FileEntry, expand_home};
 pub use handles::Element;
 pub use input::{Cursor, cursor_shape};
 pub use item::{
-    Common, FlickProps, FlowProps, FolderProps, GridProps, ItemId, Kind, KindName, ListViewProps,
-    MouseAreaProps, PopupProps, PositionerProps, RectangleProps, RepeaterProps, SplitProps,
-    TextInputProps, TextProps,
+    CanvasProps, Common, FlickProps, FlowProps, FolderProps, GridProps, ItemId, Kind, KindName,
+    ListViewProps, MouseAreaProps, PopupProps, PositionerProps, RectangleProps, RepeaterProps,
+    ShapeProps, SplitProps, TextInputProps, TextProps,
 };
 pub use layout::{Anchors, Line};
 pub use layouts::{LayoutProps, Solved, align};
@@ -58,6 +59,7 @@ pub use model::{AnyModel, Change, Model, ModelRc, ModelSource, ModelTracker, Vec
 pub use popup::close_policy;
 pub use render::{DrawOp, Rect, Renderer, play};
 pub use repeater::{Delegate, DelegateFactory};
+pub use shape::{CanvasPainter, Painter, Path, PathCmd, ShapePathValue, ShapePaths};
 pub use signal::{Emitted, Handler, SignalId};
 pub use textinput::{echo, wrap};
 pub use ui::{Effect, Prop, PropId, Ui};

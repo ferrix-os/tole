@@ -826,8 +826,13 @@ impl Program {
             }
         }
         out.push((var.clone(), ty.clone(), element, parent, under));
-        if matches!(ty, ElemTy::Kind(Kind::Repeater | Kind::ListView)) {
-            // Its child is its delegate, made by a factory of its own.
+        if matches!(
+            ty,
+            ElemTy::Kind(Kind::Repeater | Kind::ListView | Kind::Shape)
+        ) || kind_of(element) == Some(Kind::Shape)
+        {
+            // Its child is its delegate, made by a factory of its own; a
+            // Shape's are its paths, values rather than items.
             return Ok(());
         }
         let prefix: String = match var.rfind('_') {
@@ -1531,6 +1536,15 @@ impl Program {
         }
         if matches!(ty, ElemTy::Kind(Kind::Repeater | Kind::ListView)) {
             out.push_str(&self.delegate_factory(scope, var, ty, element)?);
+        }
+        if kind_of(element) == Some(Kind::Shape) {
+            // A component's root is its handle's base.
+            let handle = if matches!(ty, ElemTy::Component(_)) {
+                format!("{var}.base")
+            } else {
+                var.to_owned()
+            };
+            out.push_str(&self.shape_paths(scope, &handle, element)?);
         }
         Ok(out)
     }
@@ -3103,6 +3117,117 @@ impl Program {
 }
 
 impl Program {
+    /// A `Shape`'s `ShapePath`s as one binding of its `paths`: each a
+    /// path from `startX`, `startY` through its `PathMove`, `PathLine`,
+    /// `PathQuad` and `PathCubic` steps, its fill, stroke and width.
+    fn shape_paths(
+        &self,
+        scope: &Scope<'_>,
+        var: &str,
+        element: &Element,
+    ) -> Result<String, Diagnostic> {
+        let file = scope.file;
+        let value =
+            |name: &str, el: &Element, ty: Ty, default: &str| -> Result<String, Diagnostic> {
+                match Self::bindings_of(el)
+                    .into_iter()
+                    .find(|(n, _, _)| n == name)
+                {
+                    Some((_, expr, _)) => {
+                        let code = self.expr_want(scope, expr, Some(&ty))?;
+                        coerce(file, expr.pos(), code, &ty)
+                    }
+                    None => Ok(default.to_owned()),
+                }
+            };
+        let mut body = String::new();
+        for member in &element.members {
+            let Member::Child(path) = member else {
+                continue;
+            };
+            if path.kind.text != "ShapePath" {
+                return Err(diag(file, path.kind.pos, "a `Shape` holds `ShapePath`s"));
+            }
+            for m in &path.members {
+                if let Member::Binding { path: p, expr } = m
+                    && !matches!(
+                        p.first().map(|i| i.text.as_str()),
+                        Some(
+                            "strokeColor"
+                                | "fillColor"
+                                | "strokeWidth"
+                                | "startX"
+                                | "startY"
+                                | "closed"
+                        )
+                    )
+                {
+                    return Err(diag(
+                        file,
+                        p.first().map_or(expr.pos(), |i| i.pos),
+                        "a `ShapePath` has `strokeColor`, `fillColor`, `strokeWidth`, `startX`, `startY` and `closed`",
+                    ));
+                }
+            }
+            let _ = write!(
+                body,
+                "{{ let mut path = ::tole::Path::new(); let _ = path.move_to({}, {}); ",
+                value("startX", path, Ty::Real, "0.0_f32")?,
+                value("startY", path, Ty::Real, "0.0_f32")?
+            );
+            for step in &path.members {
+                let Member::Child(step) = step else {
+                    continue;
+                };
+                let real = |name: &str| value(name, step, Ty::Real, "0.0_f32");
+                let call = match step.kind.text.as_str() {
+                    "PathMove" => format!("path.move_to({}, {})", real("x")?, real("y")?),
+                    "PathLine" => format!("path.line_to({}, {})", real("x")?, real("y")?),
+                    "PathQuad" => format!(
+                        "path.quad_to({}, {}, {}, {})",
+                        real("controlX")?,
+                        real("controlY")?,
+                        real("x")?,
+                        real("y")?
+                    ),
+                    "PathCubic" => format!(
+                        "path.cubic_to(({}, {}), ({}, {}), {}, {})",
+                        real("control1X")?,
+                        real("control1Y")?,
+                        real("control2X")?,
+                        real("control2Y")?,
+                        real("x")?,
+                        real("y")?
+                    ),
+                    _ => {
+                        return Err(diag(
+                            file,
+                            step.kind.pos,
+                            "a `ShapePath` holds `PathMove`, `PathLine`, `PathQuad` and `PathCubic`",
+                        ));
+                    }
+                };
+                let _ = write!(body, "let _ = {call}; ");
+            }
+            let _ = write!(
+                body,
+                "if {} {{ let _ = path.close(); }} paths.push(::tole::ShapePathValue {{ path, fill: {}, stroke: {}, width: {} }}); }} ",
+                value("closed", path, Ty::Bool, "false")?,
+                value("fillColor", path, Ty::Color, "::tole::Color::TRANSPARENT")?,
+                value(
+                    "strokeColor",
+                    path,
+                    Ty::Color,
+                    "::tole::Color::rgba(0, 0, 0, 255)"
+                )?,
+                value("strokeWidth", path, Ty::Real, "1.0_f32")?
+            );
+        }
+        Ok(format!(
+            "        ::tole::Prop::bind({var}.props.paths, ui, move |ui: &mut ::tole::Ui| -> ::tole::ShapePaths {{ let _ = &ui; let mut paths = ::std::vec::Vec::new(); {body}::tole::ShapePaths::new(paths) }});\n"
+        ))
+    }
+
     /// A call of `owner`'s function `name` on `receiver`, its missing
     /// arguments given their defaults.
     fn function_call(
@@ -3423,7 +3548,12 @@ fn find_id<'e>(element: &'e Element, id: &str, top: bool) -> Option<&'e Element>
     {
         return Some(element);
     }
-    if !top && matches!(element.kind.text.as_str(), "Repeater" | "ListView") {
+    if !top
+        && matches!(
+            element.kind.text.as_str(),
+            "Repeater" | "ListView" | "Shape"
+        )
+    {
         return None;
     }
     element.members.iter().find_map(|m| match m {

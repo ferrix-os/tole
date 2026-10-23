@@ -4,11 +4,11 @@
 //! Each is `Copy`, so a binding closure captures the handles it reads by
 //! value.
 
+use crate::item::{CanvasProps, FolderProps, PopupProps, ShapeProps, SplitProps};
 use crate::item::{
     Common, FlickProps, FlowProps, GridProps, ItemId, KindName, ListViewProps, MouseAreaProps,
     PositionerProps, RectangleProps, RepeaterProps, TextInputProps, TextProps,
 };
-use crate::item::{FolderProps, PopupProps, SplitProps};
 use crate::ui::Ui;
 
 /// What every handle, and every component the compiler generates, is.
@@ -103,6 +103,14 @@ handle!(
     Repeater, Repeater, RepeaterProps, repeater
 );
 
+handle!(
+    /// A `Canvas`.
+    Canvas, Canvas, CanvasProps, canvas
+);
+handle!(
+    /// A `Shape`.
+    Shape, Shape, ShapeProps, shape
+);
 handle!(
     /// A `Popup`.
     Popup, Popup, PopupProps, popup

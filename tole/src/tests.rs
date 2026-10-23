@@ -1678,3 +1678,74 @@ fn a_text_edit_breaks_lines_and_moves_between_them() {
         }
     }
 }
+
+#[test]
+fn a_canvas_paints_through_its_rust_painter_and_again_when_told() {
+    let mut ui = bare();
+    let canvas = crate::handles::Canvas::new(&mut ui, None).unwrap();
+    canvas.common.x.set(&mut ui, 10.0);
+    canvas.common.width.set(&mut ui, 100.0);
+    canvas.common.height.set(&mut ui, 40.0);
+    let height = Rc::new(Cell::new(10.0_f32));
+    let data = Rc::clone(&height);
+    canvas.props.painter.set(
+        &mut ui,
+        crate::CanvasPainter::new(move |p| {
+            let (w, h) = p.size();
+            p.fill_rect(
+                crate::Rect::new(0.0, h - data.get(), w, data.get()),
+                0.0,
+                Color::hex(0x2a62c9),
+            );
+        }),
+    );
+    let first = ui.scene();
+    assert_eq!(
+        first,
+        [DrawOp::Fill {
+            rect: crate::Rect::new(10.0, 30.0, 100.0, 10.0),
+            radius: 0.0,
+            color: Color::hex(0x2a62c9)
+        }],
+        "in the canvas's own coordinates, placed"
+    );
+    let _ = ui.take_changed();
+    height.set(20.0);
+    ui.update_canvas(canvas.id);
+    assert!(ui.take_changed(), "a frame is wanted");
+    assert_ne!(ui.scene(), first);
+}
+
+#[test]
+fn a_path_is_bounded_and_drawn() {
+    let mut ui = bare();
+    let shape = crate::handles::Shape::new(&mut ui, None).unwrap();
+    let mut path = crate::Path::new();
+    let _ = path
+        .move_to(0.0, 0.0)
+        .line_to(18.0, 10.0)
+        .line_to(0.0, 20.0)
+        .close();
+    assert_eq!(path.bounds(), Some(crate::Rect::new(0.0, 0.0, 18.0, 20.0)));
+    shape.props.paths.set(
+        &mut ui,
+        crate::ShapePaths::new(vec![crate::ShapePathValue {
+            path,
+            fill: Color::hex(0xff0000),
+            stroke: Color::TRANSPARENT,
+            width: 0.0,
+        }]),
+    );
+    assert_eq!(
+        ui.get(shape.common.width),
+        18.0,
+        "its implicit size is its paths'"
+    );
+    assert_eq!(ui.get(shape.common.height), 20.0);
+    shape.common.x.set(&mut ui, 5.0);
+    let frame = ui.render((30, 30), Color::TRANSPARENT).unwrap();
+    let at = |x: u32, y: u32| frame.pixel(x, y).unwrap().red();
+    assert_eq!(at(8, 10), 255, "inside the triangle");
+    assert_eq!(at(20, 10), 255, "near its tip");
+    assert_eq!(at(20, 3), 0, "outside");
+}

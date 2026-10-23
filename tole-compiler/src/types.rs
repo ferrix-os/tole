@@ -41,6 +41,8 @@ pub(crate) enum Ty {
     Easing,
     /// A folder's entry, as a `FolderListModel` gives it.
     FileEntry,
+    /// A `Canvas`'s painting function, given from Rust.
+    Painter,
 }
 
 impl Ty {
@@ -59,6 +61,7 @@ impl Ty {
             "font" => Ty::Font,
             "KeyEvent" => Ty::KeyEvent,
             "FileEntry" => Ty::FileEntry,
+            "painter" => Ty::Painter,
             other if other.starts_with("list<") && other.ends_with('>') => {
                 let inner = other.get(5..other.len() - 1)?;
                 Ty::List(Box::new(Ty::named(inner, structs, enums)?))
@@ -91,6 +94,7 @@ impl Ty {
             Ty::ModelSource => "::tole::ModelSource".to_owned(),
             Ty::Easing => "::tole::Easing".to_owned(),
             Ty::FileEntry => "::tole::FileEntry".to_owned(),
+            Ty::Painter => "::tole::CanvasPainter".to_owned(),
             Ty::Enum(name) | Ty::Struct(name) => name.clone(),
         }
     }
@@ -113,6 +117,7 @@ impl Ty {
             Ty::ModelSource => "count, list or model".to_owned(),
             Ty::Easing => "easing curve".to_owned(),
             Ty::FileEntry => "FileEntry".to_owned(),
+            Ty::Painter => "painter".to_owned(),
             Ty::Enum(name) | Ty::Struct(name) => name.clone(),
         }
     }
@@ -185,6 +190,10 @@ pub(crate) enum Kind {
     SplitViewVertical,
     /// `FolderListModel`.
     FolderListModel,
+    /// `Canvas`.
+    Canvas,
+    /// `Shape`.
+    Shape,
 }
 
 impl Kind {
@@ -211,6 +220,8 @@ impl Kind {
             "Popup" => Kind::Popup,
             "SplitView" => Kind::SplitView,
             "FolderListModel" => Kind::FolderListModel,
+            "Canvas" => Kind::Canvas,
+            "Shape" => Kind::Shape,
             _ => return None,
         })
     }
@@ -239,6 +250,8 @@ impl Kind {
             Kind::SplitView => "::tole::handles::SplitView",
             Kind::SplitViewVertical => "::tole::handles::SplitViewVertical",
             Kind::FolderListModel => "::tole::handles::FolderListModel",
+            Kind::Canvas => "::tole::handles::Canvas",
+            Kind::Shape => "::tole::handles::Shape",
         }
     }
 
@@ -315,6 +328,7 @@ impl Kind {
             (Kind::MouseArea, ["mouseX"]) => Some((".props.mouse_x", Ty::Real)),
             (Kind::MouseArea, ["mouseY"]) => Some((".props.mouse_y", Ty::Real)),
             (Kind::MouseArea, ["cursorShape"]) => Some((".props.cursor_shape", Ty::Int)),
+            (Kind::Canvas, ["painter"]) => Some((".props.painter", Ty::Painter)),
             (Kind::Popup, ["closePolicy"]) => Some((".props.close_policy", Ty::Int)),
             (Kind::Popup, ["modal"]) => Some((".props.modal", Ty::Bool)),
             (Kind::Popup, ["dimColor"]) => Some((".props.dim_color", Ty::Color)),

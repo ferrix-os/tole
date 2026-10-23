@@ -126,6 +126,22 @@ pub struct TextInputProps {
     pub multiline: bool,
 }
 
+/// A `Canvas`'s own properties.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CanvasProps {
+    /// The Rust function it is painted by.
+    pub painter: Prop<crate::shape::CanvasPainter>,
+    /// Bumped by [`Ui::update_canvas`]: its data changed.
+    pub revision: Prop<i32>,
+}
+
+/// A `Shape`'s own properties.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShapeProps {
+    /// Its `ShapePath`s, as the markup binds them.
+    pub paths: Prop<crate::shape::ShapePaths>,
+}
+
 /// A `Popup`'s own properties.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PopupProps {
@@ -297,6 +313,10 @@ pub enum Kind {
     SplitView(SplitProps),
     /// A `FolderListModel`: draws nothing, lists a folder.
     FolderListModel(FolderProps),
+    /// A `Canvas`: painted by a Rust function.
+    Canvas(CanvasProps),
+    /// A `Shape`: paths of lines and curves, filled and stroked.
+    Shape(ShapeProps),
 }
 
 /// A `MouseArea`'s own properties and signals.
@@ -379,6 +399,10 @@ pub enum KindName {
     SplitViewVertical,
     /// [`Kind::FolderListModel`].
     FolderListModel,
+    /// [`Kind::Canvas`].
+    Canvas,
+    /// [`Kind::Shape`].
+    Shape,
 }
 
 /// One item.
@@ -550,6 +574,18 @@ impl Ui {
                 vertical: kind == KindName::SplitViewVertical,
             }),
             KindName::FolderListModel => Kind::FolderListModel(self.folder_props()),
+            KindName::Canvas => Kind::Canvas(CanvasProps {
+                painter: self.prop(crate::shape::CanvasPainter::default()),
+                revision: self.prop(0_i32),
+            }),
+            KindName::Shape => {
+                let props = ShapeProps {
+                    paths: self.prop(crate::shape::ShapePaths::default()),
+                };
+                implicit_width.bind(self, move |ui| ui.shape_extent(props).0);
+                implicit_height.bind(self, move |ui| ui.shape_extent(props).1);
+                Kind::Shape(props)
+            }
             KindName::TextInput | KindName::TextEdit => {
                 let text = self.prop(Rc::<str>::from(""));
                 let cursor_position = self.prop(0_i32);
@@ -1057,6 +1093,8 @@ fn props_of(data: &ItemData) -> Vec<crate::ui::PropId> {
             ]);
         }
         Kind::Popup(p) => ids.extend([p.close_policy.id, p.modal.id, p.dim_color.id]),
+        Kind::Canvas(p) => ids.extend([p.painter.id, p.revision.id]),
+        Kind::Shape(p) => ids.push(p.paths.id),
         Kind::SplitView(p) => ids.extend([
             p.flow.spacing.id,
             p.flow.solve.id,

@@ -220,6 +220,50 @@ impl Renderer for CpuRenderer<'_, '_> {
         }
     }
 
+    fn path(&mut self, path: &crate::shape::Path, fill: Color, stroke: Color, width: f32) {
+        use crate::shape::PathCmd;
+        let Some(bounds) = path.bounds() else {
+            return;
+        };
+        let grown = Rect::new(
+            bounds.x - width,
+            bounds.y - width,
+            bounds.w + 2.0 * width,
+            bounds.h + 2.0 * width,
+        );
+        let Some(masked) = self.prepare_mask(grown) else {
+            return;
+        };
+        let s = self.scale;
+        let mut builder = PathBuilder::new();
+        for cmd in path.cmds() {
+            match *cmd {
+                PathCmd::Move(x, y) => builder.move_to(x * s, y * s),
+                PathCmd::Line(x, y) => builder.line_to(x * s, y * s),
+                PathCmd::Quad(cx, cy, x, y) => builder.quad_to(cx * s, cy * s, x * s, y * s),
+                PathCmd::Cubic(a, b, c, d, x, y) => {
+                    builder.cubic_to(a * s, b * s, c * s, d * s, x * s, y * s);
+                }
+                PathCmd::Close => builder.close(),
+            }
+        }
+        let Some(skia_path) = builder.finish() else {
+            return;
+        };
+        if !fill.is_transparent() {
+            self.draw_path(&skia_path, &paint(fill, true), None, masked);
+        }
+        if !stroke.is_transparent() && width > 0.0 {
+            let line = Stroke {
+                width: width * s,
+                line_join: tiny_skia::LineJoin::Round,
+                line_cap: tiny_skia::LineCap::Round,
+                ..Stroke::default()
+            };
+            self.draw_path(&skia_path, &paint(stroke, true), Some(&line), masked);
+        }
+    }
+
     fn push_clip(&mut self, rect: Rect) {
         let rect = match self.clips.last() {
             Some(outer) => outer.rect.intersect(&rect),

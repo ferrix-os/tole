@@ -102,6 +102,17 @@ pub enum DrawOp {
         /// The colour.
         color: Color,
     },
+    /// A path filled and stroked; a transparent colour does nothing.
+    Path {
+        /// The path, in the window's logical pixels.
+        path: Rc<crate::shape::Path>,
+        /// What fills it.
+        fill: Color,
+        /// What strokes it.
+        stroke: Color,
+        /// The stroke's width.
+        width: f32,
+    },
     /// Cut what follows to a rectangle, inside any cut already made.
     PushClip(Rect),
     /// End the last cut.
@@ -120,6 +131,8 @@ pub trait Renderer {
     fn stroke(&mut self, rect: Rect, radius: f32, width: f32, color: Color);
     /// A run, its pen at (`x`, `baseline`) in buffer pixels.
     fn text(&mut self, run: &Run, x: f32, baseline: f32, color: Color);
+    /// A path filled with `fill` and stroked `width` wide with `stroke`.
+    fn path(&mut self, path: &crate::shape::Path, fill: Color, stroke: Color, width: f32);
     /// Cut what follows to `rect`.
     fn push_clip(&mut self, rect: Rect);
     /// End the last cut.
@@ -151,6 +164,12 @@ pub fn play(ops: &[DrawOp], renderer: &mut dyn Renderer) {
                 baseline,
                 color,
             } => renderer.text(run, *x, *baseline, *color),
+            DrawOp::Path {
+                path,
+                fill,
+                stroke,
+                width,
+            } => renderer.path(path, *fill, *stroke, *width),
             DrawOp::PushClip(rect) => renderer.push_clip(*rect),
             DrawOp::PopClip => renderer.pop_clip(),
             DrawOp::PushOpacity(opacity) => renderer.push_opacity(*opacity),
@@ -246,6 +265,8 @@ impl Ui {
                 }
             }
             Some(Kind::SplitView(props)) => self.split_ops(item, props, place, ops),
+            Some(Kind::Canvas(props)) => self.canvas_ops(props, place, ops),
+            Some(Kind::Shape(props)) => self.shape_ops(props, place, ops),
             _ => {}
         }
         let scale = self.scale();

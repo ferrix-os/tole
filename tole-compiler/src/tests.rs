@@ -698,3 +698,44 @@ component P : Item {
         "1:47: a SplitView's `orientation` is `Qt.Horizontal` or `Qt.Vertical`, and stays"
     );
 }
+
+#[test]
+fn shapes_and_canvases() {
+    let rust = accepted(
+        r#"
+component P : Item {
+    property painter chart
+    Canvas { painter: chart }
+    Shape {
+        ShapePath {
+            fillColor: "red"
+            startX: 0; startY: 0
+            PathLine { x: width; y: 10 }
+            PathQuad { controlX: 4; controlY: 4; x: 0; y: 20 }
+            closed: true
+        }
+    }
+}
+"#,
+    );
+    assert!(
+        rust.contains("pub chart: ::tole::Prop<::tole::CanvasPainter>,"),
+        "{rust}"
+    );
+    assert!(
+        rust.contains("::tole::Prop::bind(e1.props.painter, ui"),
+        "{rust}"
+    );
+    assert!(
+        rust.contains("let _ = path.line_to(ui.get(e2.common.width), ((10_i32) as f32));"),
+        "{rust}"
+    );
+    assert!(rust.contains(
+        "path.quad_to(((4_i32) as f32), ((4_i32) as f32), ((0_i32) as f32), ((20_i32) as f32))"
+    ));
+    assert!(rust.contains("if true { let _ = path.close(); }"));
+    assert_eq!(
+        refused("component P : Shape { Rectangle { } }"),
+        "1:23: a `Shape` holds `ShapePath`s"
+    );
+}

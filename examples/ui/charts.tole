@@ -1,0 +1,79 @@
+// Charts as Canvas painters, which are Rust functions over the data:
+// a histogram, a sparkline and an area. And fixed figures as Shapes,
+// written here: a play triangle, a check mark, a skip mark.
+import Fx
+import Fx.Controls
+
+component Charts : Rectangle {
+    property painter histogram
+    property painter sparkline
+    property painter area
+    width: 700; height: 330
+    color: Theme.bg2
+
+    Row {
+        x: 20; y: 20
+        spacing: 16
+        GroupBox {
+            title: "RECORDS PER MINUTE"
+            Canvas { width: 300; height: 150; painter: histogram }
+            Label { text: "14,213 records in the last hour"; color: Theme.ink4 }
+        }
+        Column {
+            spacing: 16
+            GroupBox {
+                title: "ERRORS, LAST HOUR"
+                Row {
+                    spacing: 12
+                    Canvas { width: 180; height: 36; painter: sparkline }
+                    Label { text: "3 / min"; font: Theme.sans(15, 600); anchors.verticalCenter: parent.verticalCenter }
+                }
+            }
+            GroupBox {
+                title: "MEMORY IN USE"
+                Canvas { width: 268; height: 80; painter: area }
+            }
+        }
+    }
+
+    Row {
+        x: 20; y: 280
+        spacing: 20
+        Shape {
+            // The boot picker's triangle.
+            ShapePath {
+                fillColor: Theme.accent
+                strokeColor: "transparent"
+                startX: 0; startY: 0
+                PathLine { x: 18; y: 10 }
+                PathLine { x: 0; y: 20 }
+                closed: true
+            }
+        }
+        Shape {
+            ShapePath {
+                strokeColor: Theme.green
+                strokeWidth: 3
+                startX: 2; startY: 11
+                PathLine { x: 8; y: 17 }
+                PathLine { x: 20; y: 3 }
+            }
+        }
+        Shape {
+            // A skip mark: two chevrons, the second a curve.
+            ShapePath {
+                strokeColor: Theme.ink3
+                strokeWidth: 2
+                startX: 2; startY: 2
+                PathLine { x: 10; y: 10 }
+                PathLine { x: 2; y: 18 }
+            }
+            ShapePath {
+                strokeColor: Theme.ink3
+                strokeWidth: 2
+                startX: 12; startY: 2
+                PathQuad { controlX: 24; controlY: 10; x: 12; y: 18 }
+            }
+        }
+    }
+}

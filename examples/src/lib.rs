@@ -58,7 +58,7 @@ pub fn find_text(ui: &mut Ui, label: &str) -> Option<tole::ItemId> {
 }
 
 /// Every demo, in the README's order.
-pub const DEMOS: [Demo; 11] = [
+pub const DEMOS: [Demo; 12] = [
     Demo {
         name: "hello",
         about: "the smallest program",
@@ -142,7 +142,109 @@ pub const DEMOS: [Demo; 11] = [
         about: "the FileDialog over a window, dark, on a folder kept for it",
         make: chooser,
     },
+    Demo {
+        name: "charts",
+        about: "Canvas painters in Rust (histogram, sparkline, area) and Shapes in markup",
+        make: charts,
+    },
 ];
+
+/// The charts demo: its three painters, Rust over made-up data, in the
+/// theme's colours.
+fn charts(ui: &mut Ui) -> Option<tole::Common> {
+    use tole::{CanvasPainter, Path, Rect};
+    let theme = fx_controls::Theme::instance(ui);
+    theme.dark.set(ui, false);
+    let (accent, fill, line, ink, red) = (
+        theme.accent.get(ui),
+        theme.accent_bg.get(ui),
+        theme.line.get(ui),
+        theme.ink4.get(ui),
+        theme.red.get(ui),
+    );
+    let font = theme.sans(ui, 10.0, 400);
+    let root = Charts::new(ui, None)?;
+    // A wave with a bump: the same every run.
+    let series = |n: usize, seed: f32| -> Vec<f32> {
+        (0..n)
+            .map(|i| {
+                let t = i as f32 / n as f32;
+                let wave = 0.55 + 0.25 * (t * 9.0 + seed).sin() + 0.12 * (t * 23.0 + seed).cos();
+                let bump = (-((t - 0.7) * 9.0).powi(2)).exp() * 0.35;
+                (wave + bump).clamp(0.05, 1.0)
+            })
+            .collect()
+    };
+    let bars = series(30, 0.3);
+    root.histogram.set(
+        ui,
+        CanvasPainter::new(move |p| {
+            let (w, h) = p.size();
+            let base = h - 16.0;
+            for k in 0..4 {
+                let y = base - base * k as f32 / 3.0;
+                p.line((0.0, y), (w, y), 1.0, line);
+            }
+            let step = w / bars.len() as f32;
+            for (i, v) in bars.iter().enumerate() {
+                let bar = (base - 4.0) * v;
+                let color = if *v > 0.95 { red } else { accent };
+                p.fill_rect(
+                    Rect::new(i as f32 * step + 1.0, base - bar, step - 2.0, bar),
+                    1.5,
+                    color,
+                );
+            }
+            for (i, label) in ["−30", "−20", "−10", "now"].iter().enumerate() {
+                let x = (w - 18.0) * i as f32 / 3.0;
+                p.text(label, &font, (x, h - 2.0), ink);
+            }
+        }),
+    );
+    let spark = series(40, 2.0);
+    root.sparkline.set(
+        ui,
+        CanvasPainter::new(move |p| {
+            let (w, h) = p.size();
+            let mut path = Path::new();
+            for (i, v) in spark.iter().enumerate() {
+                let x = w * i as f32 / (spark.len() - 1) as f32;
+                let y = h - 2.0 - (h - 4.0) * v;
+                if i == 0 {
+                    let _ = path.move_to(x, y);
+                } else {
+                    let _ = path.line_to(x, y);
+                }
+            }
+            p.path(&path, Color::TRANSPARENT, red, 1.5);
+        }),
+    );
+    let memory = series(60, 4.0);
+    root.area.set(
+        ui,
+        CanvasPainter::new(move |p| {
+            let (w, h) = p.size();
+            let point =
+                |i: usize, v: f32| (w * i as f32 / (memory.len() - 1) as f32, h - (h - 6.0) * v);
+            let mut top = Path::new();
+            let mut under = Path::new();
+            let _ = under.move_to(0.0, h);
+            for (i, v) in memory.iter().enumerate() {
+                let (x, y) = point(i, *v);
+                if i == 0 {
+                    let _ = top.move_to(x, y);
+                } else {
+                    let _ = top.line_to(x, y);
+                }
+                let _ = under.line_to(x, y);
+            }
+            let _ = under.line_to(w, h).close();
+            p.path(&under, fill, Color::TRANSPARENT, 0.0);
+            p.path(&top, Color::TRANSPARENT, accent, 1.5);
+        }),
+    );
+    Some(root.common())
+}
 
 /// The popups demo: the combo box opened by a click, the menu by the
 /// program, an item of it under the pointer, and the list scrolled.
