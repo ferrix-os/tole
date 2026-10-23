@@ -130,6 +130,10 @@ pub struct Ui {
     pub(crate) scale: Prop<f32>,
     /// Whether anything changed since the last frame.
     changed: bool,
+    /// The signals.
+    pub(crate) signals: crate::signal::Signals,
+    /// Where the pointer is and what it holds.
+    pub(crate) input: crate::input::Input,
 }
 
 impl fmt::Debug for Ui {
@@ -164,6 +168,8 @@ impl Ui {
                 marker: PhantomData,
             },
             changed: true,
+            signals: crate::signal::Signals::default(),
+            input: crate::input::Input::default(),
         };
         ui.scale = ui.prop(1.0_f32);
         ui

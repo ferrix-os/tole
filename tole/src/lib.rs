@@ -16,19 +16,24 @@
 
 mod cpu;
 pub mod handles;
+mod input;
 mod item;
 mod layout;
 pub mod png;
 mod render;
+mod signal;
 mod text;
 mod ui;
 mod value;
 
 pub use cpu::CpuRenderer;
 pub use handles::Element;
-pub use item::{Common, ItemId, Kind, KindName, PositionerProps, RectangleProps, TextProps};
+pub use item::{
+    Common, ItemId, Kind, KindName, MouseAreaProps, PositionerProps, RectangleProps, TextProps,
+};
 pub use layout::{Anchors, Line};
 pub use render::{DrawOp, Rect, Renderer, play};
+pub use signal::{Emitted, Handler, SignalId};
 pub use ui::{Prop, PropId, Ui};
 pub use value::{Color, CustomValue, Elide, Font, HAlign, PropType, VAlign, Value};
 

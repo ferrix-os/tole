@@ -97,6 +97,40 @@ pub enum Kind {
     Row(PositionerProps),
     /// A `Column`: its children one under another.
     Column(PositionerProps),
+    /// A `MouseArea`: where the pointer presses, hovers and turns the
+    /// wheel.
+    MouseArea(MouseAreaProps),
+}
+
+/// A `MouseArea`'s own properties and signals.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MouseAreaProps {
+    /// Whether it takes the pointer at all.
+    pub enabled: Prop<bool>,
+    /// Whether it follows the pointer when no button is down.
+    pub hover_enabled: Prop<bool>,
+    /// Whether a press it took is held.
+    pub pressed: Prop<bool>,
+    /// Whether the pointer is over it (while hovering is enabled, or
+    /// while pressed).
+    pub contains_mouse: Prop<bool>,
+    /// The pointer's place across it.
+    pub mouse_x: Prop<f32>,
+    /// The pointer's place down it.
+    pub mouse_y: Prop<f32>,
+    /// A press and a release on it.
+    pub clicked: crate::signal::SignalId,
+    /// A press.
+    pub on_pressed: crate::signal::SignalId,
+    /// The release of a press it took.
+    pub released: crate::signal::SignalId,
+    /// The pointer came over it.
+    pub entered: crate::signal::SignalId,
+    /// The pointer left it.
+    pub exited: crate::signal::SignalId,
+    /// The wheel turned over it: the vertical delta, in logical pixels,
+    /// positive down.
+    pub wheel: crate::signal::SignalId,
 }
 
 /// The kinds, to make one.
@@ -112,6 +146,8 @@ pub enum KindName {
     Row,
     /// [`Kind::Column`].
     Column,
+    /// [`Kind::MouseArea`].
+    MouseArea,
 }
 
 /// One item.
@@ -125,6 +161,17 @@ pub(crate) struct ItemData {
     pub(crate) parent: Option<ItemId>,
     /// Its children, in paint order.
     pub(crate) children: Vec<ItemId>,
+    /// Properties and signals a component declared on it, freed with it.
+    pub(crate) owned: Vec<Owned>,
+}
+
+/// What an item holds for a component.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Owned {
+    /// A declared property.
+    Prop(crate::ui::PropId),
+    /// A declared signal.
+    Signal(crate::signal::SignalId),
 }
 
 /// A place in the arena.
@@ -198,12 +245,27 @@ impl Ui {
                     Kind::Column(props)
                 }
             }
+            KindName::MouseArea => Kind::MouseArea(MouseAreaProps {
+                enabled: self.prop(true),
+                hover_enabled: self.prop(false),
+                pressed: self.prop(false),
+                contains_mouse: self.prop(false),
+                mouse_x: self.prop(0.0_f32),
+                mouse_y: self.prop(0.0_f32),
+                clicked: self.new_signal(),
+                on_pressed: self.new_signal(),
+                released: self.new_signal(),
+                entered: self.new_signal(),
+                exited: self.new_signal(),
+                wheel: self.new_signal(),
+            }),
         };
         let data = ItemData {
             kind,
             common,
             parent,
             children: Vec::new(),
+            owned: Vec::new(),
         };
         let id = self.place(data);
         match parent {
@@ -242,6 +304,25 @@ impl Ui {
             for prop in props_of(&data) {
                 self.free(prop);
             }
+            for owned in &data.owned {
+                match *owned {
+                    Owned::Prop(prop) => self.free(prop),
+                    Owned::Signal(signal) => self.free_signal(signal),
+                }
+            }
+            if let Kind::MouseArea(m) = data.kind {
+                for signal in [
+                    m.clicked,
+                    m.on_pressed,
+                    m.released,
+                    m.entered,
+                    m.exited,
+                    m.wheel,
+                ] {
+                    self.free_signal(signal);
+                }
+            }
+            self.forget_input(id);
             self.free_items.push(id.index);
         }
         match parent {
@@ -289,6 +370,36 @@ impl Ui {
             Kind::Text(props) => Some(props),
             _ => None,
         }
+    }
+
+    /// A `MouseArea`'s own properties and signals.
+    #[must_use]
+    pub fn mouse_area(&self, item: ItemId) -> Option<MouseAreaProps> {
+        match self.kind(item)? {
+            Kind::MouseArea(props) => Some(props),
+            _ => None,
+        }
+    }
+
+    /// A property a component declared on `item`: made here, and freed
+    /// with the item.
+    pub fn own_prop<T: crate::PropType>(&mut self, item: ItemId, value: T) -> Prop<T> {
+        let prop = self.prop(value);
+        match self.item_mut(item) {
+            Some(data) => data.owned.push(Owned::Prop(prop.id)),
+            None => self.free(prop.id),
+        }
+        prop
+    }
+
+    /// A signal a component declared on `item`, freed with the item.
+    pub fn own_signal(&mut self, item: ItemId) -> crate::signal::SignalId {
+        let signal = self.new_signal();
+        match self.item_mut(item) {
+            Some(data) => data.owned.push(Owned::Signal(signal)),
+            None => self.free_signal(signal),
+        }
+        signal
     }
 
     /// A `Row`'s or `Column`'s own properties.
@@ -395,6 +506,14 @@ fn props_of(data: &ItemData) -> Vec<crate::ui::PropId> {
             p.vertical_alignment.id,
         ]),
         Kind::Row(p) | Kind::Column(p) => ids.extend([p.spacing.id, p.padding.id]),
+        Kind::MouseArea(p) => ids.extend([
+            p.enabled.id,
+            p.hover_enabled.id,
+            p.pressed.id,
+            p.contains_mouse.id,
+            p.mouse_x.id,
+            p.mouse_y.id,
+        ]),
     }
     ids
 }

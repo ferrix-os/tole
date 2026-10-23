@@ -535,3 +535,149 @@ fn a_declared_type_is_a_property_value() {
         "types differ"
     );
 }
+
+/// A mouse area of `w` × `h` at (`x`, `y`) under `parent`.
+fn area(
+    ui: &mut Ui,
+    parent: crate::ItemId,
+    (x, y, w, h): (f32, f32, f32, f32),
+) -> crate::handles::MouseArea {
+    let a = crate::handles::MouseArea::new(ui, Some(parent)).unwrap();
+    a.common.x.set(ui, x);
+    a.common.y.set(ui, y);
+    a.common.width.set(ui, w);
+    a.common.height.set(ui, h);
+    a
+}
+
+/// The signals emitted since the last call, by id.
+fn emitted(ui: &mut Ui) -> Vec<crate::SignalId> {
+    ui.take_signals().into_iter().map(|e| e.signal).collect()
+}
+
+#[test]
+fn a_press_and_release_is_a_click_on_the_topmost_area() {
+    let mut ui = bare();
+    let root = crate::handles::Item::new(&mut ui, None).unwrap();
+    let below = area(&mut ui, root.id, (0.0, 0.0, 100.0, 100.0));
+    let above = area(&mut ui, root.id, (50.0, 50.0, 100.0, 100.0));
+    ui.pointer_move(75.0, 75.0);
+    ui.pointer_press();
+    assert!(above.props.pressed.get(&mut ui));
+    assert!(!below.props.pressed.get(&mut ui));
+    ui.pointer_release();
+    assert_eq!(
+        emitted(&mut ui),
+        [
+            above.props.on_pressed,
+            above.props.released,
+            above.props.clicked
+        ]
+    );
+    // Only the lower one is there.
+    ui.pointer_move(20.0, 20.0);
+    ui.pointer_press();
+    ui.pointer_release();
+    assert_eq!(
+        emitted(&mut ui),
+        [
+            below.props.on_pressed,
+            below.props.released,
+            below.props.clicked
+        ]
+    );
+}
+
+#[test]
+fn a_press_holds_the_pointer_and_a_release_elsewhere_is_no_click() {
+    let mut ui = bare();
+    let root = crate::handles::Item::new(&mut ui, None).unwrap();
+    let a = area(&mut ui, root.id, (0.0, 0.0, 50.0, 50.0));
+    let other = area(&mut ui, root.id, (100.0, 0.0, 50.0, 50.0));
+    ui.pointer_move(10.0, 10.0);
+    ui.pointer_press();
+    ui.pointer_move(120.0, 10.0);
+    assert_eq!(
+        a.props.mouse_x.get(&mut ui),
+        120.0,
+        "the held area follows the pointer"
+    );
+    ui.pointer_release();
+    let got = emitted(&mut ui);
+    assert_eq!(got, [a.props.on_pressed, a.props.released]);
+    assert!(!got.contains(&other.props.clicked));
+}
+
+#[test]
+fn hover_enters_and_exits_and_a_clip_hides_what_it_cuts() {
+    let mut ui = bare();
+    let root = crate::handles::Rectangle::new(&mut ui, None).unwrap();
+    root.common.width.set(&mut ui, 100.0);
+    root.common.height.set(&mut ui, 100.0);
+    root.common.clip.set(&mut ui, true);
+    let a = area(&mut ui, root.id, (80.0, 0.0, 50.0, 50.0));
+    a.props.hover_enabled.set(&mut ui, true);
+    ui.pointer_move(90.0, 10.0);
+    assert!(a.props.contains_mouse.get(&mut ui));
+    assert_eq!(emitted(&mut ui), [a.props.entered]);
+    assert_eq!(a.props.mouse_x.get(&mut ui), 10.0);
+    // Past the clip: gone.
+    ui.pointer_move(110.0, 10.0);
+    assert!(!a.props.contains_mouse.get(&mut ui));
+    assert_eq!(emitted(&mut ui), [a.props.exited]);
+    // Without hover, nothing is said.
+    a.props.hover_enabled.set(&mut ui, false);
+    ui.pointer_move(90.0, 10.0);
+    assert!(emitted(&mut ui).is_empty());
+    // A disabled area takes nothing.
+    a.props.enabled.set(&mut ui, false);
+    ui.pointer_press();
+    ui.pointer_release();
+    assert!(emitted(&mut ui).is_empty());
+}
+
+#[test]
+fn handlers_run_in_order_and_signals_die_with_their_item() {
+    let mut ui = bare();
+    let root = crate::handles::Item::new(&mut ui, None).unwrap();
+    let count = ui.own_prop(root.id, 0_i32);
+    let said = ui.own_signal(root.id);
+    ui.connect(
+        said,
+        Rc::new(move |ui: &mut Ui, args: &[crate::Value]| {
+            let by = args
+                .first()
+                .and_then(<i32 as crate::PropType>::from_value)
+                .unwrap_or(0);
+            let now = count.get(ui);
+            count.set(ui, now + by);
+        }),
+    );
+    ui.emit(said, vec![crate::Value::Int(3)]);
+    ui.emit(said, vec![crate::Value::Int(4)]);
+    assert_eq!(count.get(&mut ui), 7);
+    assert_eq!(ui.take_signals().len(), 2);
+    ui.destroy(root.id);
+    assert!(
+        !ui.is_live(count.id),
+        "a declared property goes with its item"
+    );
+    ui.emit(said, vec![crate::Value::Int(1)]);
+    assert!(
+        ui.take_signals().is_empty(),
+        "and so does a declared signal"
+    );
+}
+
+#[test]
+fn a_handler_emitting_itself_stops() {
+    let mut ui = bare();
+    let root = crate::handles::Item::new(&mut ui, None).unwrap();
+    let said = ui.own_signal(root.id);
+    ui.connect(
+        said,
+        Rc::new(move |ui: &mut Ui, _: &[crate::Value]| ui.emit(said, Vec::new())),
+    );
+    ui.emit(said, Vec::new());
+    assert_eq!(ui.take_signals().len(), 64);
+}

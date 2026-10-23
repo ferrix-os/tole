@@ -4,7 +4,9 @@
 //! Each is `Copy`, so a binding closure captures the handles it reads by
 //! value.
 
-use crate::item::{Common, ItemId, KindName, PositionerProps, RectangleProps, TextProps};
+use crate::item::{
+    Common, ItemId, KindName, MouseAreaProps, PositionerProps, RectangleProps, TextProps,
+};
 use crate::ui::Ui;
 
 /// What every handle, and every component the compiler generates, is.
@@ -59,6 +61,10 @@ handle!(
 handle!(
     /// A `Row`.
     Row, Row, PositionerProps, positioner
+);
+handle!(
+    /// A `MouseArea`.
+    MouseArea, MouseArea, MouseAreaProps, mouse_area
 );
 handle!(
     /// A `Column`.
