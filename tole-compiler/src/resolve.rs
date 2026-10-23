@@ -93,6 +93,10 @@ pub(crate) const MODULES: &[(&str, &str, &[Source])] = &[
                 include_str!("../modules/Fx/Controls/ScrollBar.tole"),
             ),
             (
+                "FileIcon.tole",
+                include_str!("../modules/Fx/Controls/FileIcon.tole"),
+            ),
+            (
                 "FileDialog.tole",
                 include_str!("../modules/Fx/Controls/FileDialog.tole"),
             ),

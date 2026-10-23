@@ -280,6 +280,7 @@ impl Ui {
             }
             Some(Kind::SplitView(props)) => self.split_ops(item, props, place, ops),
             Some(Kind::Canvas(props)) => self.canvas_ops(props, place, ops),
+            Some(Kind::Image(props)) => self.image_ops(props, place, ops),
             Some(Kind::Shape(props)) => self.shape_ops(props, place, ops),
             _ => {}
         }

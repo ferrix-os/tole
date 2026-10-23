@@ -163,6 +163,8 @@ pub struct Ui {
     pub(crate) exclusives: Vec<(ItemId, Prop<bool>)>,
     /// The singletons, by type: each made the first time it is asked for.
     globals: std::collections::HashMap<std::any::TypeId, Box<dyn std::any::Any>>,
+    /// The pictures `Image` items drew, at the size they drew them.
+    pub(crate) pictures: crate::image::Pictures,
 }
 
 /// Work done when the `Ui` updates, rather than when a property is read:
@@ -211,6 +213,7 @@ impl Ui {
             clipboard: crate::textinput::Clipboard::default(),
             exclusives: Vec::new(),
             globals: std::collections::HashMap::new(),
+            pictures: crate::image::Pictures::default(),
         };
         ui.scale = ui.prop(1.0_f32);
         ui

@@ -18,6 +18,7 @@ mod anim;
 mod cpu;
 mod damage;
 mod exclusive;
+pub mod files;
 mod flick;
 mod focus;
 mod folder;
@@ -45,15 +46,16 @@ pub mod window;
 
 pub use anim::{Animate, Easing, StateValue, Step, Transition, Tween, When};
 pub use cpu::CpuRenderer;
+pub use files::{FileKind, Pattern, Search, fix_home_and_clock, search_mode};
 pub use focus::{KeyEvent, Nav};
-pub use folder::{FileEntry, expand_home};
+pub use folder::{FileEntry, entry_of, expand_home, sort_field};
 pub use handles::Element;
-pub use image::Image;
+pub use image::{Image, fill_mode, image_status};
 pub use input::{Cursor, cursor_shape};
 pub use item::{
-    CanvasProps, Common, FlickProps, FlowProps, FolderProps, GridProps, ItemId, Kind, KindName,
-    ListViewProps, MouseAreaProps, PopupProps, PositionerProps, RectangleProps, RepeaterProps,
-    ShapeProps, SplitProps, TextInputProps, TextProps,
+    CanvasProps, Common, FileInfoProps, FlickProps, FlowProps, FolderProps, GridProps, ImageProps,
+    ItemId, Kind, KindName, ListViewProps, MouseAreaProps, PopupProps, PositionerProps,
+    RectangleProps, RepeaterProps, ShapeProps, SplitProps, TextInputProps, TextProps,
 };
 pub use layout::{Anchors, Line};
 pub use layouts::{LayoutProps, Solved, align};

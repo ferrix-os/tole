@@ -151,7 +151,12 @@ impl Ui {
             .filter(|&&child| {
                 !matches!(
                     self.kind(child),
-                    Some(Kind::Repeater(_) | Kind::Popup(_) | Kind::FolderListModel(_))
+                    Some(
+                        Kind::Repeater(_)
+                            | Kind::Popup(_)
+                            | Kind::FolderListModel(_)
+                            | Kind::FileInfo(_)
+                    )
                 )
             })
             .filter_map(|&child| Some((child, self.common(child)?)))

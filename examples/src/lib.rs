@@ -58,7 +58,7 @@ pub fn find_text(ui: &mut Ui, label: &str) -> Option<tole::ItemId> {
 }
 
 /// Every demo, in the README's order.
-pub const DEMOS: [Demo; 12] = [
+pub const DEMOS: [Demo; 13] = [
     Demo {
         name: "hello",
         about: "the smallest program",
@@ -138,9 +138,14 @@ pub const DEMOS: [Demo; 12] = [
         make: popups,
     },
     Demo {
-        name: "file-chooser",
-        about: "the FileDialog over a window, dark, on a folder kept for it",
-        make: chooser,
+        name: "file-chooser-dark",
+        about: "the FileDialog asking for a private key, dark: a key chosen, its contents hidden",
+        make: |ui| chooser(ui, true),
+    },
+    Demo {
+        name: "file-chooser-light",
+        about: "the same, light: all files, as a grid, a picture chosen and refused",
+        make: |ui| chooser(ui, false),
     },
     Demo {
         name: "charts",
@@ -263,25 +268,138 @@ fn popups(ui: &mut Ui) -> Option<tole::Common> {
     Some(root.common())
 }
 
-/// The file chooser demo: the dialog open on `fixtures/machines`, a key
-/// chosen; the path field shows it as a person's home would.
-fn chooser(ui: &mut Ui) -> Option<tole::Common> {
+/// The clock the file chooser's pictures are drawn at: 2026-10-24,
+/// noon UTC, so its dates do not move with the day it is drawn.
+pub const FIXTURE_NOW: i64 = 1_792_843_200;
+
+/// A home folder for the file chooser's demos and tests, made once per
+/// process under the temporary folder: keys (the private ones only
+/// look like keys: written here, never kept in the tree), pictures drawn
+/// here, documents, each with a set age.
+///
+/// A file that cannot be written is left out.
+#[must_use]
+pub fn fixture_home() -> PathBuf {
+    static MADE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    MADE.get_or_init(|| {
+        let home = std::env::temp_dir().join(format!("tole-examples-home-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let day = 86_400;
+        let private = |kind: &str, lines: usize| {
+            let mut text = format!("-----BEGIN {kind} PRIVATE KEY-----\n");
+            for _ in 0..lines {
+                text.push_str("not-a-real-key-not-a-real-key-not-a-real-key-not-a-real-key-not-\n");
+            }
+            text.push_str(&format!("-----END {kind} PRIVATE KEY-----\n"));
+            text.into_bytes()
+        };
+        let public = |who: &str| {
+            format!("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK7v3pQm9yX2cF1nB8dLhT0sW4eRjZ6aUo5gNiVkY2Mx {who}\n")
+                .into_bytes()
+        };
+        let files: Vec<(&str, Vec<u8>, i64)> = vec![
+            ("machines/keys/id_ed25519", private("OPENSSH", 5), 3600),
+            ("machines/keys/id_ed25519.pub", public("deploy@workstation"), 3600),
+            ("machines/keys/staging_rsa", private("OPENSSH", 40), 42 * day),
+            ("machines/keys/staging_rsa.pub", public("staging@workstation"), 42 * day),
+            ("machines/keys/archive/old_prod.pem", private("RSA", 25), 235 * day),
+            ("machines/keys/.known_hosts", b"web-01 ssh-ed25519 AAAA\n".to_vec(), 3600),
+            (
+                "machines/configs/web-01.toml",
+                b"[host]\nname = \"web-01\"\naddress = \"10.0.4.21\"\nuser = \"deploy\"\n".to_vec(),
+                22 * day,
+            ),
+            ("machines/inventory.yaml", b"machines:\n  - web-01\n  - staging\n".to_vec(), 4 * day),
+            ("machines/README.md", b"# machines\n".to_vec(), 9 * day),
+            (".ssh/id_rsa", private("OPENSSH", 40), 289 * day),
+            (".ssh/id_rsa.pub", public("me@workstation"), 289 * day),
+            (
+                ".ssh/config",
+                b"Host web-01\n  HostName 10.0.4.21\n  User deploy\n  IdentityFile ~/machines/keys/id_ed25519\n".to_vec(),
+                6 * day,
+            ),
+            (".ssh/known_hosts", b"web-01 ssh-ed25519 AAAA\n".repeat(40), 3600),
+            ("Pictures/harbour-dusk.png", picture(320, 200, [233, 120, 92], [44, 62, 120]), 3600),
+            ("Pictures/desk-plant.png", picture(240, 240, [126, 166, 245], [47, 163, 90]), day),
+            ("Documents/notes.md", b"# Notes\n\nThe staging key rotates on the first.\n".to_vec(), 10 * day),
+            ("Downloads/deploy-key.pem", private("RSA", 25), day),
+            ("Downloads/invoice.pdf", b"%PDF-1.4\n%not a real invoice\n".repeat(200), 15 * day),
+        ];
+        for (name, bytes, age) in &files {
+            let path = home.join(name);
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&path, bytes);
+            set_age(&path, *age);
+        }
+        for dir in ["machines/keys/archive", "machines/keys", "machines/configs", "machines", ".ssh", "Pictures", "Documents", "Downloads"] {
+            set_age(&home.join(dir), 2 * day);
+        }
+        home
+    })
+    .clone()
+}
+
+/// Make `path` changed `age` seconds before [`FIXTURE_NOW`].
+fn set_age(path: &std::path::Path, age: i64) {
+    let when = std::time::UNIX_EPOCH
+        + std::time::Duration::from_secs(u64::try_from(FIXTURE_NOW - age).unwrap_or(0));
+    if let Ok(file) = std::fs::File::open(path) {
+        let _ = file.set_modified(when);
+    }
+}
+
+/// A picture `w` by `h`: a gradient from `a` at the top left to `b` at
+/// the bottom right, with a light disc, as a PNG file's bytes.
+fn picture(w: u32, h: u32, a: [u8; 3], b: [u8; 3]) -> Vec<u8> {
+    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let t = (x + y) as f32 / (w + h) as f32;
+            let (dx, dy) = (x as f32 - w as f32 * 0.7, y as f32 - h as f32 * 0.35);
+            let sun = (dx * dx + dy * dy).sqrt() < h as f32 * 0.16;
+            for (&from, &to) in a.iter().zip(b.iter()) {
+                let (from, to) = (f32::from(from), f32::from(to));
+                let v = if sun { 250.0 } else { from + (to - from) * t };
+                rgba.push(v as u8);
+            }
+            rgba.push(255);
+        }
+    }
+    tole::png::encode(w, h, &rgba)
+}
+
+/// The file chooser demo, as the lode viewer asks for a key. Dark: open
+/// on `~/machines/keys`, a key chosen, its preview hiding what is in it.
+/// Light: `~/Pictures` as a grid under "All files", a picture chosen,
+/// which the line at the foot says is not a key.
+fn chooser(ui: &mut Ui, dark: bool) -> Option<tole::Common> {
+    tole::fix_home_and_clock(Some(fixture_home()), Some(FIXTURE_NOW));
     let theme = fx_controls::Theme::instance(ui);
-    theme.dark.set(ui, true);
+    theme.dark.set(ui, dark);
     let root = Chooser::new(ui, None)?;
     let model = find_kind(ui, |k| matches!(k, tole::Kind::FolderListModel(_)))?;
-    let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/machines/keys");
     let props = ui.folder_list(model)?;
-    props
-        .folder
-        .set(ui, folder.to_string_lossy().as_ref().into());
     let dialog = popup_of(ui, model)?;
     ui.open_popup(dialog);
-    ui.update();
-    let field = find_input(ui, &folder.to_string_lossy())?;
-    let text = ui.text_input(field)?;
-    text.text.set(ui, "~/machines/keys".into());
-    press(ui, "id_ed25519", true)?;
+    if dark {
+        props.folder.set(ui, "~/machines/keys".into());
+        ui.update();
+        press(ui, "id_ed25519", true)?;
+    } else {
+        props.folder.set(ui, "~/Pictures".into());
+        ui.update();
+        press(ui, "All files", true)?;
+        // The grid button, beside the list's.
+        let at = ui.rect_of(dialog)?;
+        click_at(ui, at.x + 72.0, at.y + 77.0);
+        ui.update();
+        press(ui, "harbour-dusk.png", true)?;
+        // Over the place it would go to.
+        press(ui, ".ssh", false)?;
+        return Some(root.common());
+    }
     ui.pointer_leave();
     Some(root.common())
 }
@@ -863,49 +981,162 @@ mod tests {
         assert!((end - most).abs() < 1.0, "{end} of {most}");
     }
 
+    /// Whether a `Text` saying `label` is shown: it and every item above
+    /// it visible.
+    fn shown(ui: &mut tole::Ui, label: &str) -> bool {
+        let mut stack: Vec<tole::ItemId> = ui.roots().to_vec();
+        while let Some(item) = stack.pop() {
+            let Some(common) = ui.common(item) else {
+                continue;
+            };
+            if !ui.get(common.visible) {
+                continue;
+            }
+            if let Some(text) = ui.text(item)
+                && &*ui.get(text.text) == label
+            {
+                return true;
+            }
+            stack.extend(ui.children(item).iter().rev());
+        }
+        false
+    }
+
+    fn type_text(ui: &mut tole::Ui, text: &str) {
+        for c in text.chars() {
+            super::key(ui, &c.to_string());
+        }
+    }
+
     #[test]
-    fn the_file_dialog_walks_folders_and_chooses_a_file() {
-        use super::fx_controls::{FileDialog, FileDialogSignal};
+    fn the_file_dialog_walks_filters_searches_and_chooses_by_key() {
+        use super::fx_controls::FileDialogSignal;
+        tole::fix_home_and_clock(Some(super::fixture_home()), Some(super::FIXTURE_NOW));
         let mut ui = tole::Ui::new(super::fonts());
         let root = tole::handles::Item::new(&mut ui, None).expect("made");
-        root.common.width.set(&mut ui, 640.0);
-        root.common.height.set(&mut ui, 480.0);
-        let dialog = FileDialog::new(&mut ui, Some(root.id)).expect("made");
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/machines");
-        dialog
-            .folder
-            .set(&mut ui, dir.to_string_lossy().as_ref().into());
-        ui.open_popup(tole::Element::id(&dialog));
-        let _ = ui.render((640, 480), tole::Color::TRANSPARENT);
-        assert!(
-            super::find_text(&mut ui, "keys/").is_some(),
-            "folders first, marked"
-        );
-        assert!(super::find_text(&mut ui, ".hidden").is_none());
-        super::press(&mut ui, "Show hidden files", true).expect("clicked");
-        let _ = ui.render((640, 480), tole::Color::TRANSPARENT);
-        assert!(super::find_text(&mut ui, ".hidden").is_some());
-        // A double click opens a folder.
-        super::press(&mut ui, "keys/", true).expect("clicked");
-        super::press(&mut ui, "keys/", true).expect("clicked");
-        let _ = ui.render((640, 480), tole::Color::TRANSPARENT);
-        assert!(super::find_text(&mut ui, "id_ed25519.pub").is_some());
-        // Up goes back.
-        super::press(&mut ui, "Up", true).expect("clicked");
-        let _ = ui.render((640, 480), tole::Color::TRANSPARENT);
-        assert!(super::find_text(&mut ui, "hosts.txt").is_some());
+        root.common.width.set(&mut ui, 1000.0);
+        root.common.height.set(&mut ui, 700.0);
+        let handle = super::fx_controls::FileDialog::new(&mut ui, Some(root.id)).expect("made");
+        handle.accepted_types.set(&mut ui, "[private]".into());
+        handle.accepted_label.set(&mut ui, "Private keys".into());
+        handle.accepted_noun.set(&mut ui, "private keys".into());
+        handle.open_label.set(&mut ui, "Use key".into());
+        handle.folder.set(&mut ui, "~/.ssh".into());
+        let dialog = tole::Element::id(&handle);
+        let model =
+            super::find_kind(&ui, |k| matches!(k, tole::Kind::FolderListModel(_))).expect("model");
+        let props = ui.folder_list(model).expect("props");
+        let draw = |ui: &mut tole::Ui| {
+            let _ = ui.render((1000, 700), tole::Color::TRANSPARENT);
+        };
+        ui.open_popup(dialog);
+        draw(&mut ui);
+        // It opens in ~/.ssh, private keys only.
+        assert!(shown(&mut ui, "id_rsa"));
+        assert!(!shown(&mut ui, "id_rsa.pub"));
+        assert!(!shown(&mut ui, "config"));
+        assert!(shown(&mut ui, "Pick one of the private keys"));
+        // All files: the rest shows, and a public key is refused, saying why.
+        super::press(&mut ui, "All files", true).expect("clicked");
+        draw(&mut ui);
+        assert!(shown(&mut ui, "config"));
+        super::press(&mut ui, "id_rsa.pub", true).expect("clicked");
+        draw(&mut ui);
+        assert!(shown(&mut ui, "Public key: use the file without .pub"));
         let _ = ui.take_signals();
-        ui.tick(5000.0);
-        super::press(&mut ui, "hosts.txt", true).expect("clicked");
-        super::press(&mut ui, "Open", true).expect("clicked");
+        super::press(&mut ui, "Use key", true).expect("clicked");
+        assert!(ui.get(tole::Element::common(&root).visible));
+        assert!(
+            ui.get(ui.common(dialog).expect("common").visible),
+            "still open"
+        );
+        // Backspace goes up, to the home folder.
+        super::key(&mut ui, "BackSpace");
+        draw(&mut ui);
+        assert_eq!(&*ui.get(props.display_path), "~");
+        assert!(shown(&mut ui, "machines"));
+        // The search: the name contains it; then as a regular expression,
+        // which cannot be read with a lone bracket.
+        super::press(&mut ui, "Filter by name", true).expect("clicked");
+        type_text(&mut ui, "own");
+        draw(&mut ui);
+        assert!(shown(&mut ui, "Downloads"));
+        assert!(!shown(&mut ui, "machines"));
+        super::press(&mut ui, "Aa", true).expect("clicked");
+        draw(&mut ui);
+        super::press(&mut ui, "Regex", true).expect("clicked");
+        draw(&mut ui);
+        assert_eq!(ui.get(props.filter_mode), tole::search_mode::REGEX);
+        type_text(&mut ui, "(");
+        draw(&mut ui);
+        assert!(!ui.get(props.filter_error).is_empty());
+        assert!(shown(&mut ui, "Any text, then .png"), "the help shows");
+        for _ in 0..4 {
+            super::key(&mut ui, "BackSpace");
+        }
+        draw(&mut ui);
+        assert!(ui.get(props.filter_error).is_empty());
+        // A pattern of one's own that cannot be read says so.
+        super::press(&mut ui, "Custom", true).expect("clicked");
+        draw(&mut ui);
+        let field = super::find_input(&mut ui, "[image] | *.txt").expect("pattern field");
+        let input = ui.text_input(field).expect("input");
+        input.text.set(&mut ui, "[pictur".into());
+        draw(&mut ui);
+        assert!(ui.get(props.accept_error).contains("unmatched bracket"));
+        input.text.set(&mut ui, "[image]".into());
+        // The keys: into ~/machines/keys, Down twice, Return chooses.
+        super::press(&mut ui, "Private keys", true).expect("clicked");
+        props.folder.set(&mut ui, "~/machines/keys".into());
+        draw(&mut ui);
+        let _ = ui.take_signals();
+        super::key(&mut ui, "Down");
+        super::key(&mut ui, "Down");
+        draw(&mut ui);
+        assert!(shown(&mut ui, "Private key \u{b7} 395 B"));
+        super::key(&mut ui, "Return");
         let chosen: Vec<FileDialogSignal> = ui
             .take_signals()
             .iter()
-            .filter_map(|e| dialog.signal(e))
+            .filter_map(|e| handle.signal(e))
+            .filter(|s| {
+                matches!(
+                    s,
+                    FileDialogSignal::Accepted(_) | FileDialogSignal::Rejected
+                )
+            })
             .collect();
-        let want = dir.join("hosts.txt").to_string_lossy().into_owned();
-        assert_eq!(chosen, [FileDialogSignal::Accepted(want.into())]);
-        assert!(!ui.get(tole::Element::common(&dialog).visible), "closed");
+        let want = super::fixture_home().join("machines/keys/id_ed25519");
+        assert_eq!(
+            chosen,
+            [FileDialogSignal::Accepted(
+                want.to_string_lossy().as_ref().into()
+            )]
+        );
+        assert!(
+            !ui.get(ui.common(dialog).expect("common").visible),
+            "closed"
+        );
+        // Open again: Escape cancels.
+        ui.open_popup(dialog);
+        draw(&mut ui);
+        super::key(&mut ui, "Escape");
+        let said: Vec<FileDialogSignal> = ui
+            .take_signals()
+            .iter()
+            .filter_map(|e| handle.signal(e))
+            .filter(|s| {
+                matches!(
+                    s,
+                    FileDialogSignal::Accepted(_) | FileDialogSignal::Rejected
+                )
+            })
+            .collect();
+        assert_eq!(said, [FileDialogSignal::Rejected]);
+        assert!(
+            !ui.get(ui.common(dialog).expect("common").visible),
+            "closed"
+        );
     }
 
     #[test]

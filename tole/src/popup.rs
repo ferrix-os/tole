@@ -39,10 +39,22 @@ impl Ui {
         }
     }
 
-    /// Show the `Popup` `item`.
+    /// Show the `Popup` `item`. A modal one takes the keys, as a dialog
+    /// does, and gives them back to where they were when it closes.
     pub fn open_popup(&mut self, item: ItemId) {
-        if let Some(common) = self.common(item).filter(|_| self.popup(item).is_some()) {
-            common.visible.set(self, true);
+        let Some(props) = self.popup(item) else {
+            return;
+        };
+        let Some(common) = self.common(item) else {
+            return;
+        };
+        let was_shown = self.get(common.visible);
+        common.visible.set(self, true);
+        if self.get(props.modal) && !was_shown {
+            let before = self.active_focus_item();
+            self.focus.before_popup.retain(|(p, _)| *p != item);
+            self.focus.before_popup.push((item, before));
+            self.force_active_focus(item);
         }
     }
 
@@ -50,6 +62,27 @@ impl Ui {
     pub fn close_popup(&mut self, item: ItemId) {
         if let Some(common) = self.common(item).filter(|_| self.popup(item).is_some()) {
             common.visible.set(self, false);
+        }
+        let Some(at) = self.focus.before_popup.iter().position(|(p, _)| *p == item) else {
+            return;
+        };
+        let (_, before) = self.focus.before_popup.remove(at);
+        // Only when the keys are still inside it: a popup closed after
+        // something else took them leaves them there.
+        let mut inside = false;
+        let mut walk = self.active_focus_item();
+        while let Some(here) = walk {
+            if here == item {
+                inside = true;
+                break;
+            }
+            walk = self.parent(here);
+        }
+        if inside {
+            match before {
+                Some(before) if self.exists(before) => self.force_active_focus(before),
+                _ => self.set_focus(item, false),
+            }
         }
     }
 

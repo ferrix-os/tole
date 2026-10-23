@@ -1,0 +1,45 @@
+// A file's badge: three letters for its kind (DIR, KEY, IMG ...) on a
+// tint of the kind's own colour, as the file chooser and a file manager
+// show a file without a picture of it. `kind` is a FolderListModel
+// entry's `kind`, `text` its `badge`.
+import Fx
+
+component FileIcon : Rectangle {
+    id: icon
+    property string kind
+    property string text
+    property real fontSize: 8
+
+    function tint(kind: string, dark: bool): color {
+        return kind == "folder" ? (dark ? #2a3344 : #e3ebfa)
+            : kind == "private" ? (dark ? #3a3220 : #fbf0d4)
+            : kind == "image" ? (dark ? #2c2638 : #efe8fb)
+            : kind == "archive" ? (dark ? #1f3329 : #dff3e8)
+            : kind == "video" ? (dark ? #33242a : #fbe5ec)
+            : kind == "audio" ? (dark ? #2d2a1f : #f6efdc)
+            : kind == "document" ? (dark ? #2a2f3a : #e8ecf2)
+            : (dark ? #26282d : #ededea)
+    }
+    function ink(kind: string, dark: bool): color {
+        return kind == "folder" ? (dark ? #9dbaf8 : #2a62c9)
+            : kind == "private" ? (dark ? #f0c674 : #8a6200)
+            : kind == "image" ? (dark ? #c3a6f5 : #6f45bf)
+            : kind == "archive" ? (dark ? #7fd1a8 : #1f7a4c)
+            : kind == "video" ? (dark ? #f0a0b4 : #a8355a)
+            : kind == "audio" ? (dark ? #e8c97a : #7a5c12)
+            : kind == "document" ? (dark ? #a9b6cc : #4a5870)
+            : (dark ? #8b8f98 : #666a72)
+    }
+
+    width: 24
+    height: 18
+    radius: 4
+    color: tint(kind, Theme.dark)
+
+    Text {
+        anchors.centerIn: parent
+        text: icon.text
+        font: Theme.sans(icon.fontSize, 700)
+        color: icon.ink(icon.kind, Theme.dark)
+    }
+}

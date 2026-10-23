@@ -146,6 +146,9 @@ pub(crate) struct Focus {
     window_active: bool,
     /// Whether a handler accepted the key being delivered.
     accepted: bool,
+    /// The modal popups open that took the focus, each with the item
+    /// that had it before, to have it back when the popup closes.
+    pub(crate) before_popup: Vec<(ItemId, Option<ItemId>)>,
 }
 
 impl Default for Focus {
@@ -155,6 +158,7 @@ impl Default for Focus {
             root: None,
             window_active: true,
             accepted: false,
+            before_popup: Vec::new(),
         }
     }
 }

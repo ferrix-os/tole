@@ -1,148 +1,816 @@
-// A file chooser inside the window, over everything else: the folder as
-// a path to type into, Up, its entries (a double click opens a folder or
-// chooses a file), hidden files on request, and Open and Cancel.
-// `accepted` with the chosen file's path; `folder` is where it opens.
+// The file chooser: a modal dialog inside the window, over everything
+// else (the customer's "Key File Dialog" design). A list or a grid of the
+// folder, Up and breadcrumbs, places down the side, a search in three
+// modes (the name contains the text; a pattern `*.png | my?.txt |
+// [image]`; a regular expression), a preview of the file chosen (text,
+// a picture, a key with its private contents hidden), a filter by type
+// (what it accepts, all files, or a pattern of one's own), hidden files on
+// request, and the keys: Up and Down move, Return opens, Backspace goes
+// up, Escape cancels.
+//
+// `accepted(path)` when a file is chosen, `rejected()` when it is not.
+// What it takes is `acceptedTypes`, a pattern; a file it does not take is
+// shown dimmed (under "All files") and cannot be chosen, and the line at
+// its foot says why.
 import Fx
 
 component FileDialog : Popup {
     id: dialog
     property string title: "Choose a file"
+    // Where it opens; `~` is the home folder.
     property alias folder: entries.folder
     property alias showHidden: entries.showHidden
-    property string selectedFile
-    // Its name alone, as shown at the foot.
-    property string selectedName
+    // What it accepts, as a pattern: `[private]`, `*.png | *.jpg`,
+    // `[image]`. Empty takes every file.
+    property string acceptedTypes: ""
+    // The filter button for them, and how the hints name them.
+    property string acceptedLabel: "Accepted files"
+    property string acceptedNoun: "accepted files"
+    // The places down the side: names and folders (`~` written for home,
+    // as the breadcrumbs write it).
+    property list<string> placeNames: ["Home", "Documents", "Downloads", "Pictures"]
+    property list<string> placePaths: ["~", "~/Documents", "~/Downloads", "~/Pictures"]
+    // The main button's text for a file.
+    property string openLabel: "Open"
+    // 0: what it accepts; 1: all files; 2: the pattern below.
+    property int typeFilter: acceptedTypes == "" ? 1 : 0
+    property alias customPattern: pattern.text
+    property bool gridView: false
+    property alias searchText: search.text
+    property alias searchMode: entries.filterMode
+    // The file chosen, and its name alone.
+    property string selectedFile: !hasSelection || entries.current.isDir ? "" : entries.current.path
+    property string selectedName: hasSelection ? entries.current.name : ""
+    property bool hasSelection: entries.currentIndex >= 0 && entries.current.path != ""
+    property bool canOpen: hasSelection && (entries.current.isDir || entries.current.accepted)
+    property string searchError: entries.filterError
+    property string patternError: typeFilter == 2 ? entries.acceptError : ""
+    property real rowHeight: 34
     signal accepted(string path)
     signal rejected()
+    signal activate()
+    signal go(string to)
+
+    onActivate: {
+        if (dialog.hasSelection) {
+            if (entries.current.isDir) {
+                dialog.go(entries.current.path)
+            } else if (entries.current.accepted) {
+                dialog.accepted(entries.current.path)
+                dialog.close()
+            }
+        }
+    }
+    onGo: {
+        entries.folder = to
+        entries.currentIndex = -1
+        search.text = ""
+        list.contentY = 0
+        grid.contentY = 0
+    }
 
     modal: true
-    closePolicy: Popup.CloseOnEscape
-    width: 520
-    height: 420
+    closePolicy: Popup.NoAutoClose
+    width: 900
+    height: 580
 
-    FolderListModel { id: entries }
+    Keys.onEscapePressed: { dialog.rejected(); dialog.close() }
+    Keys.onReturnPressed: dialog.activate()
+    Keys.onEnterPressed: dialog.activate()
+    Keys.onBackPressed: { if (entries.parentFolder != "") dialog.go(entries.parentFolder) }
+    Keys.onDownPressed: {
+        entries.currentIndex = min(entries.currentIndex + 1, entries.count - 1)
+        if ((entries.currentIndex + 1) * dialog.rowHeight > list.contentY + list.height) list.contentY = (entries.currentIndex + 1) * dialog.rowHeight - list.height
+    }
+    Keys.onUpPressed: {
+        entries.currentIndex = max(entries.currentIndex - 1, min(0, entries.count - 1))
+        if (entries.currentIndex * dialog.rowHeight < list.contentY) list.contentY = max(entries.currentIndex, 0) * dialog.rowHeight
+    }
+
+    FolderListModel {
+        id: entries
+        accept: dialog.typeFilter == 2 ? dialog.customPattern : dialog.acceptedTypes
+        acceptedOnly: dialog.typeFilter != 1
+        nameFilter: search.text
+    }
+    FileInfo {
+        id: info
+        path: dialog.hasSelection ? entries.current.path : ""
+        accept: entries.accept
+        showHidden: entries.showHidden
+    }
 
     Rectangle {
         anchors.fill: parent
-        radius: 10
+        radius: 14
         color: Theme.bg
         border.width: 1
         border.color: Theme.line3
     }
+
+    // The title, and a close button.
     Text {
-        x: 16; y: 14
+        x: 20; y: 16
+        height: 26
         text: dialog.title
-        font: Theme.sans(15, 600)
+        font: Theme.sans(17, 600)
         color: Theme.ink
     }
-    RowLayout {
-        x: 16; y: 44
-        width: dialog.width - 32
-        spacing: 8
-        Button {
-            text: "Up"
-            enabled: entries.parentFolder != ""
-            onClicked: entries.folder = entries.parentFolder
+    Rectangle {
+        x: dialog.width - 52; y: 14
+        width: 32; height: 32
+        radius: 8
+        color: closeArea.containsMouse ? Theme.hover : "transparent"
+        Shape {
+            ShapePath {
+                strokeColor: closeArea.containsMouse ? Theme.ink : Theme.ink4
+                strokeWidth: 1.6
+                startX: 11; startY: 11
+                PathLine { x: 21; y: 21 }
+            }
+            ShapePath {
+                strokeColor: closeArea.containsMouse ? Theme.ink : Theme.ink4
+                strokeWidth: 1.6
+                startX: 21; startY: 11
+                PathLine { x: 11; y: 21 }
+            }
         }
-        TextField {
-            id: where
-            Layout.fillWidth: true
-            text: entries.path
-            onAccepted: entries.folder = where.text
+        MouseArea {
+            id: closeArea
+            anchors.fill: parent
+            hoverEnabled: true
+            onClicked: { dialog.rejected(); dialog.close() }
+        }
+    }
+
+    // The tools: list or grid, Up, where it is, and the search.
+    Rectangle {
+        id: views
+        x: 20; y: 58
+        width: 70; height: 38
+        radius: 8
+        color: Theme.bg2
+        border.width: 1
+        border.color: Theme.line
+        Rectangle {
+            x: 3; y: 3
+            width: 31; height: 32
+            radius: 6
+            color: !dialog.gridView ? Theme.accentBg : listViewArea.containsMouse ? Theme.hover : "transparent"
+            Shape {
+                x: 8; y: 8
+                ShapePath { fillColor: !dialog.gridView ? Theme.accent : Theme.ink4; strokeWidth: 0; startX: 1; startY: 3; PathLine { x: 3; y: 3 } PathLine { x: 3; y: 5 } PathLine { x: 1; y: 5 } closed: true }
+                ShapePath { fillColor: !dialog.gridView ? Theme.accent : Theme.ink4; strokeWidth: 0; startX: 5; startY: 3; PathLine { x: 14; y: 3 } PathLine { x: 14; y: 5 } PathLine { x: 5; y: 5 } closed: true }
+                ShapePath { fillColor: !dialog.gridView ? Theme.accent : Theme.ink4; strokeWidth: 0; startX: 1; startY: 7; PathLine { x: 3; y: 7 } PathLine { x: 3; y: 9 } PathLine { x: 1; y: 9 } closed: true }
+                ShapePath { fillColor: !dialog.gridView ? Theme.accent : Theme.ink4; strokeWidth: 0; startX: 5; startY: 7; PathLine { x: 14; y: 7 } PathLine { x: 14; y: 9 } PathLine { x: 5; y: 9 } closed: true }
+                ShapePath { fillColor: !dialog.gridView ? Theme.accent : Theme.ink4; strokeWidth: 0; startX: 1; startY: 11; PathLine { x: 3; y: 11 } PathLine { x: 3; y: 13 } PathLine { x: 1; y: 13 } closed: true }
+                ShapePath { fillColor: !dialog.gridView ? Theme.accent : Theme.ink4; strokeWidth: 0; startX: 5; startY: 11; PathLine { x: 14; y: 11 } PathLine { x: 14; y: 13 } PathLine { x: 5; y: 13 } closed: true }
+            }
+            MouseArea {
+                id: listViewArea
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: dialog.gridView = false
+            }
+        }
+        Rectangle {
+            x: 36; y: 3
+            width: 31; height: 32
+            radius: 6
+            color: dialog.gridView ? Theme.accentBg : gridViewArea.containsMouse ? Theme.hover : "transparent"
+            Grid {
+                x: 9; y: 9
+                columns: 2
+                spacing: 2
+                Repeater {
+                    model: 4
+                    delegate: Rectangle { width: 5; height: 5; radius: 1.2; color: dialog.gridView ? Theme.accent : Theme.ink4 }
+                }
+            }
+            MouseArea {
+                id: gridViewArea
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: dialog.gridView = true
+            }
         }
     }
     Rectangle {
-        id: frame
-        x: 16; y: 84
-        width: dialog.width - 32
-        height: dialog.height - 84 - 92
-        radius: Theme.radius
+        id: up
+        x: 98; y: 58
+        width: 38; height: 38
+        radius: 8
+        color: upArea.containsMouse && entries.parentFolder != "" ? Theme.hover : Theme.bg2
+        border.width: 1
+        border.color: Theme.line
+        opacity: entries.parentFolder != "" ? 1 : 0.45
+        Shape {
+            ShapePath {
+                strokeColor: Theme.ink2
+                strokeWidth: 1.6
+                startX: 19; startY: 26
+                PathLine { x: 19; y: 12 }
+            }
+            ShapePath {
+                strokeColor: Theme.ink2
+                strokeWidth: 1.6
+                startX: 14; startY: 17
+                PathLine { x: 19; y: 12 }
+                PathLine { x: 24; y: 17 }
+            }
+        }
+        MouseArea {
+            id: upArea
+            anchors.fill: parent
+            hoverEnabled: true
+            onClicked: { if (entries.parentFolder != "") dialog.go(entries.parentFolder) }
+        }
+    }
+    Rectangle {
+        id: where
+        x: 144; y: 58
+        width: dialog.width - 144 - 20 - 268
+        height: 38
+        radius: 8
         color: Theme.bg2
         border.width: 1
         border.color: Theme.line
         clip: true
-        ListView {
-            id: list
-            x: 1; y: 1
-            width: parent.width - 14
-            height: parent.height - 2
-            model: entries.files
-            delegate: Rectangle {
-                width: list.width
-                height: 26
-                color: index == list.currentIndex ? Theme.accentBg : row.containsMouse ? Theme.hover : "transparent"
-                Text {
-                    x: 10
-                    height: parent.height
-                    width: parent.width - 20
-                    elide: Text.ElideRight
-                    text: modelData.isDir ? modelData.name + "/" : modelData.name
-                    font: Theme.sans(13, modelData.isDir ? 500 : 400)
-                    color: modelData.isDir ? Theme.ink2 : Theme.ink
-                }
-                MouseArea {
-                    id: row
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    onClicked: {
-                        list.currentIndex = index
-                        if (!modelData.isDir) { dialog.selectedFile = modelData.path; dialog.selectedName = modelData.name }
+        Row {
+            x: 10
+            height: parent.height
+            spacing: 2
+            Repeater {
+                model: entries.crumbs
+                delegate: Row {
+                    height: 38
+                    spacing: 2
+                    Text {
+                        visible: index > 0
+                        height: 38
+                        text: "/"
+                        font: Theme.sans(13)
+                        color: Theme.ink5
                     }
-                    onDoubleClicked: {
-                        if (modelData.isDir) {
-                            entries.folder = modelData.path
-                            list.currentIndex = -1
-                            dialog.selectedFile = ""
-                            dialog.selectedName = ""
-                        } else {
-                            dialog.selectedFile = modelData.path
-                            dialog.accepted(modelData.path)
-                            dialog.close()
+                    Rectangle {
+                        y: 7
+                        width: crumbText.implicitWidth + 12
+                        height: 24
+                        radius: 5
+                        color: crumbArea.containsMouse ? Theme.hover : "transparent"
+                        Text {
+                            id: crumbText
+                            x: 6
+                            height: 24
+                            text: modelData.name
+                            font: Theme.sans(13, modelData.path == entries.path ? 500 : 400)
+                            color: modelData.path == entries.path ? Theme.ink : Theme.ink4
+                        }
+                        MouseArea {
+                            id: crumbArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            onClicked: dialog.go(modelData.path)
                         }
                     }
                 }
             }
         }
-        ScrollBar {
-            anchors.right: parent.right
-            y: 1
-            height: parent.height - 2
-            size: list.contentHeight > 0 ? list.height / list.contentHeight : 1
-            position: list.contentHeight > 0 ? list.contentY / list.contentHeight : 0
-            onMoved: list.contentY = position * list.contentHeight
+    }
+    Rectangle {
+        id: searchBox
+        x: dialog.width - 20 - 260; y: 58
+        width: 260; height: 38
+        radius: 8
+        color: dialog.searchError != "" ? Theme.redBg : Theme.bg2
+        border.width: search.activeFocus ? 2 : 1
+        border.color: dialog.searchError != "" ? Theme.redInk : search.activeFocus ? Theme.accent : Theme.line
+        TextInput {
+            id: search
+            x: 12; y: 0
+            width: parent.width - 52
+            height: 38
+            activeFocusOnTab: true
+            font: Theme.sans(13)
+            color: dialog.searchError != "" ? Theme.redInk : Theme.ink
+            cursorColor: Theme.ink
+            selectionColor: alpha(Theme.accent, 0.3)
+            onTextEdited: entries.currentIndex = -1
+            onAccepted: dialog.activate()
+        }
+        Text {
+            x: 12
+            height: 38
+            visible: search.text == ""
+            text: entries.filterMode == FolderListModel.Advanced ? "*.png | [image]" : entries.filterMode == FolderListModel.Regex ? "^id_.*$" : "Filter by name"
+            font: Theme.sans(13)
+            color: Theme.ink5
+        }
+        Rectangle {
+            id: modeButton
+            x: parent.width - 36; y: 7
+            width: 28; height: 24
+            radius: 5
+            color: entries.filterMode != FolderListModel.Basic ? Theme.accentBg : modeArea.containsMouse ? Theme.hover : "transparent"
+            Text {
+                anchors.centerIn: parent
+                text: entries.filterMode == FolderListModel.Advanced ? "*" : entries.filterMode == FolderListModel.Regex ? ".*" : "Aa"
+                font: Theme.sans(11, 700)
+                color: entries.filterMode != FolderListModel.Basic ? Theme.accent : Theme.ink4
+            }
+            MouseArea {
+                id: modeArea
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: modes.open()
+            }
+        }
+        Menu {
+            id: modes
+            x: parent.width - 250; y: 42
+            width: 250
+            Repeater {
+                model: ["Basic", "Advanced", "Regex"]
+                delegate: Rectangle {
+                    width: 242
+                    height: 44
+                    radius: 5
+                    color: index == entries.filterMode ? Theme.accentBg : modeItem.containsMouse ? Theme.hover : "transparent"
+                    Text {
+                        x: 10; y: 6
+                        text: modelData
+                        font: Theme.sans(13, 500)
+                        color: Theme.ink
+                    }
+                    Text {
+                        x: 10; y: 24
+                        text: index == 0 ? "Name contains the text" : index == 1 ? "*.png, my?.txt, [image] | *.txt" : "A regular expression, ^id_.*$"
+                        font: Theme.sans(11)
+                        color: Theme.ink4
+                    }
+                    MouseArea {
+                        id: modeItem
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: entries.filterMode = index
+                    }
+                }
+            }
         }
     }
+
+    Rectangle { x: 0; y: 110; width: dialog.width; height: 1; color: Theme.line }
+
+    // Places.
+    Item {
+        id: side
+        x: 0; y: 111
+        width: 180
+        height: dialog.height - 111 - 120
+        Text {
+            x: 20; y: 14
+            text: "PLACES"
+            font: Theme.sans(11, 600)
+            color: Theme.ink4
+        }
+        Column {
+            x: 10; y: 38
+            width: 160
+            spacing: 2
+            Repeater {
+                model: dialog.placeNames
+                delegate: Rectangle {
+                    width: 160
+                    height: 32
+                    radius: 7
+                    color: entries.displayPath == dialog.placePaths[index] ? Theme.accentBg : placeArea.containsMouse ? Theme.hover : "transparent"
+                    Text {
+                        x: 10
+                        height: 32
+                        width: 140
+                        elide: Text.ElideRight
+                        text: modelData
+                        font: Theme.sans(13, entries.displayPath == dialog.placePaths[index] ? 500 : 400)
+                        color: entries.displayPath == dialog.placePaths[index] ? Theme.ink : Theme.ink2
+                    }
+                    MouseArea {
+                        id: placeArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: dialog.go(dialog.placePaths[index])
+                    }
+                }
+            }
+        }
+        Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.line }
+    }
+
+    // The folder: a list or a grid.
+    Item {
+        id: middle
+        x: 180; y: 111
+        width: dialog.width - 180 - (dialog.hasSelection ? 270 : 0)
+        height: dialog.height - 111 - 120
+        clip: true
+
+        Item {
+            visible: !dialog.gridView
+            anchors.fill: parent
+            Text { x: 18; y: 0; height: 32; text: "Name"; font: Theme.sans(12); color: Theme.ink4 }
+            Text { x: middle.width - 314; y: 0; height: 32; visible: !dialog.hasSelection; text: "Kind"; font: Theme.sans(12); color: Theme.ink4 }
+            Text { x: middle.width - 194; y: 0; height: 32; width: 70; visible: !dialog.hasSelection; horizontalAlignment: Text.AlignRight; text: "Size"; font: Theme.sans(12); color: Theme.ink4 }
+            Text { x: middle.width - 110; y: 0; height: 32; width: 90; horizontalAlignment: Text.AlignRight; text: dialog.hasSelection ? "Size" : "Modified"; font: Theme.sans(12); color: Theme.ink4 }
+            Rectangle { x: 0; y: 32; width: parent.width; height: 1; color: Theme.line2 }
+            ListView {
+                id: list
+                x: 6; y: 37
+                width: parent.width - 18
+                height: parent.height - 40
+                model: entries.files
+                delegate: Rectangle {
+                    width: list.width
+                    height: dialog.rowHeight
+                    radius: 7
+                    color: index == entries.currentIndex ? Theme.accentOver : row.containsMouse ? Theme.hover : "transparent"
+                    opacity: index == entries.currentIndex || modelData.accepted ? (modelData.hidden ? 0.7 : 1) : 0.45
+                    FileIcon {
+                        x: 10; y: 8
+                        visible: !modelData.isImage
+                        kind: modelData.kind
+                        text: modelData.badge
+                    }
+                    Image {
+                        x: 10; y: 8
+                        width: 24; height: 18
+                        visible: modelData.isImage
+                        source: modelData.isImage ? modelData.path : ""
+                        fillMode: Image.PreserveAspectCrop
+                    }
+                    Text {
+                        x: 44
+                        width: (dialog.hasSelection ? list.width - 120 : list.width - 360)
+                        height: dialog.rowHeight
+                        elide: Text.ElideRight
+                        text: modelData.name
+                        font: Theme.sans(13, modelData.isDir ? 500 : 400)
+                        color: modelData.kind == "public" && index != entries.currentIndex ? Theme.ink3 : Theme.ink
+                    }
+                    Text {
+                        x: list.width - 308
+                        width: 110
+                        height: dialog.rowHeight
+                        visible: !dialog.hasSelection
+                        elide: Text.ElideRight
+                        text: modelData.kindLabel
+                        font: Theme.sans(12)
+                        color: Theme.ink4
+                    }
+                    Text {
+                        x: list.width - 188
+                        width: 70
+                        height: dialog.rowHeight
+                        visible: !dialog.hasSelection
+                        horizontalAlignment: Text.AlignRight
+                        text: modelData.sizeText
+                        font: Theme.sans(12)
+                        color: Theme.ink4
+                    }
+                    Text {
+                        x: list.width - 104
+                        width: 90
+                        height: dialog.rowHeight
+                        horizontalAlignment: Text.AlignRight
+                        text: dialog.hasSelection ? modelData.sizeText : modelData.modified
+                        font: Theme.sans(12)
+                        color: Theme.ink4
+                    }
+                    MouseArea {
+                        id: row
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: entries.currentIndex = index
+                        onDoubleClicked: { entries.currentIndex = index; dialog.activate() }
+                    }
+                }
+            }
+            ScrollBar {
+                anchors.right: parent.right
+                y: 37
+                height: parent.height - 40
+                visible: list.contentHeight > list.height
+                size: list.contentHeight > 0 ? list.height / list.contentHeight : 1
+                position: list.contentHeight > 0 ? list.contentY / list.contentHeight : 0
+                onMoved: list.contentY = position * list.contentHeight
+            }
+        }
+
+        Flickable {
+            id: grid
+            visible: dialog.gridView
+            x: 10; y: 10
+            width: parent.width - 20
+            height: parent.height - 20
+            contentHeight: tiles.implicitHeight
+            Flow {
+                id: tiles
+                width: grid.width
+                spacing: 8
+                Repeater {
+                    model: entries.files
+                    delegate: Rectangle {
+                        width: 116
+                        height: 112
+                        radius: 9
+                        color: index == entries.currentIndex ? Theme.accentOver : tile.containsMouse ? Theme.hover : "transparent"
+                        opacity: index == entries.currentIndex || modelData.accepted ? (modelData.hidden ? 0.7 : 1) : 0.45
+                        FileIcon {
+                            x: 30; y: 14
+                            width: 56; height: 44
+                            radius: 8
+                            fontSize: 12
+                            visible: !modelData.isImage
+                            kind: modelData.kind
+                            text: modelData.badge
+                        }
+                        Image {
+                            x: 10; y: 8
+                            width: 96; height: 64
+                            visible: modelData.isImage
+                            source: modelData.isImage ? modelData.path : ""
+                            fillMode: Image.PreserveAspectCrop
+                        }
+                        Text {
+                            x: 6; y: 74
+                            width: 104
+                            height: 18
+                            elide: Text.ElideRight
+                            horizontalAlignment: Text.AlignHCenter
+                            text: modelData.name
+                            font: Theme.sans(12, 500)
+                            color: Theme.ink
+                        }
+                        Text {
+                            x: 6; y: 92
+                            width: 104
+                            height: 14
+                            horizontalAlignment: Text.AlignHCenter
+                            text: modelData.sizeText
+                            font: Theme.sans(11)
+                            color: Theme.ink4
+                        }
+                        MouseArea {
+                            id: tile
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            onClicked: entries.currentIndex = index
+                            onDoubleClicked: { entries.currentIndex = index; dialog.activate() }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Nothing to show, and why.
+        Text {
+            x: 20; y: 52
+            width: middle.width - 40
+            visible: entries.count == 0 && dialog.searchError == "" && dialog.patternError == ""
+            elide: Text.ElideRight
+            text: search.text != "" ? "No matches for “${search.text}”"
+                : dialog.typeFilter == 0 && dialog.acceptedTypes != "" ? "No ${dialog.acceptedNoun} here. Switch to All files to see everything."
+                : "This folder is empty."
+            font: Theme.sans(13)
+            color: Theme.ink4
+        }
+        // A search or a pattern that cannot be read, and how to write one.
+        Rectangle {
+            x: 16; y: 48
+            width: middle.width - 32
+            height: 168
+            visible: dialog.searchError != "" || dialog.patternError != ""
+            radius: 9
+            color: Theme.redBg
+            border.width: 1
+            border.color: alpha(Theme.redInk, 0.4)
+            Text {
+                x: 14; y: 10
+                width: parent.width - 28
+                height: 22
+                elide: Text.ElideRight
+                text: dialog.searchError != "" ? "Search: ${dialog.searchError}" : dialog.patternError
+                font: Theme.sans(13, 500)
+                color: Theme.redInk
+            }
+            Grid {
+                x: 14; y: 40
+                columns: 2
+                columnSpacing: 18
+                rowSpacing: 6
+                Text { text: "*.png"; font: Theme.mono(12); color: Theme.ink }
+                Text { text: "Any text, then .png"; font: Theme.sans(12); color: Theme.ink3 }
+                Text { text: "my?.txt"; font: Theme.mono(12); color: Theme.ink }
+                Text { text: "? matches one character"; font: Theme.sans(12); color: Theme.ink3 }
+                Text { text: "a | b"; font: Theme.mono(12); color: Theme.ink }
+                Text { text: "Match either (or use a comma)"; font: Theme.sans(12); color: Theme.ink3 }
+                Text { text: "[kind]"; font: Theme.mono(12); color: Theme.ink }
+                Text { text: "image, private, public, text, archive, video, folder"; font: Theme.sans(12); color: Theme.ink3 }
+                Text { text: "^id_.*$"; font: Theme.mono(12); color: Theme.ink }
+                Text { text: "Regex mode in search"; font: Theme.sans(12); color: Theme.ink3 }
+            }
+        }
+    }
+
+    // The preview of what is chosen.
+    Item {
+        id: preview
+        visible: dialog.hasSelection
+        x: dialog.width - 270; y: 111
+        width: 270
+        height: dialog.height - 111 - 120
+        Rectangle { width: 1; height: parent.height; color: Theme.line }
+        FileIcon {
+            x: 18; y: 18
+            width: 40; height: 34
+            radius: 7
+            fontSize: 10
+            kind: info.entry.kind
+            text: info.entry.badge
+        }
+        Text {
+            x: 68; y: 16
+            width: 186
+            height: 20
+            elide: Text.ElideRight
+            text: info.entry.name
+            font: Theme.sans(14, 600)
+            color: Theme.ink
+        }
+        Text {
+            x: 68; y: 36
+            text: info.entry.kindLabel
+            font: Theme.sans(12)
+            color: Theme.ink4
+        }
+        Image {
+            x: 1; y: 66
+            width: 269; height: 180
+            visible: info.entry.isImage
+            source: info.entry.isImage ? info.entry.path : ""
+            fillMode: Image.PreserveAspectCrop
+        }
+        Rectangle {
+            x: 14; y: 66
+            width: 242; height: 180
+            visible: !info.entry.isImage
+            radius: 8
+            color: Theme.bg2
+            border.width: 1
+            border.color: Theme.line
+            clip: true
+            TextEdit {
+                x: 10; y: 8
+                width: 222
+                readOnly: true
+                wrapMode: TextEdit.NoWrap
+                text: info.text != "" ? info.text : "No preview for this file."
+                font: Theme.mono(11)
+                color: info.entry.kind == "private" || info.text == "" ? Theme.ink4 : Theme.ink3
+            }
+        }
+        GridLayout {
+            x: 18; y: 262
+            width: 236
+            columns: 2
+            rowSpacing: 6
+            Text { text: info.entry.isDir ? "Items" : "Size"; font: Theme.sans(12); color: Theme.ink4 }
+            Text { Layout.fillWidth: true; horizontalAlignment: Text.AlignRight; text: info.entry.isDir ? "${info.entry.items}" : info.entry.sizeText; font: Theme.sans(12); color: Theme.ink }
+            Text { visible: !info.entry.isDir; text: "Modified"; font: Theme.sans(12); color: Theme.ink4 }
+            Text { visible: !info.entry.isDir; Layout.fillWidth: true; horizontalAlignment: Text.AlignRight; text: info.entry.modified; font: Theme.sans(12); color: Theme.ink }
+            Text { text: "Location"; font: Theme.sans(12); color: Theme.ink4 }
+            Text { Layout.fillWidth: true; horizontalAlignment: Text.AlignRight; elide: Text.ElideRight; text: info.location; font: Theme.sans(12); color: Theme.ink }
+            Text { visible: info.entry.kind == "private"; text: "Contents"; font: Theme.sans(12); color: Theme.ink4 }
+            Text { visible: info.entry.kind == "private"; Layout.fillWidth: true; horizontalAlignment: Text.AlignRight; text: "Hidden for security"; font: Theme.sans(12); color: Theme.ink }
+        }
+    }
+
+    // The filter by type, hidden files, and the keys.
+    Rectangle { x: 0; y: dialog.height - 120; width: dialog.width; height: 1; color: Theme.line }
+    Rectangle {
+        id: types
+        x: 20; y: dialog.height - 106
+        width: typeRow.implicitWidth + 8
+        height: 34
+        radius: 8
+        color: Theme.bg2
+        border.width: 1
+        border.color: Theme.line
+        Row {
+            id: typeRow
+            x: 4; y: 4
+            spacing: 2
+            Repeater {
+                model: [dialog.acceptedLabel, "All files", "Custom"]
+                delegate: Rectangle {
+                    visible: index != 0 || dialog.acceptedTypes != ""
+                    width: typeText.implicitWidth + 20
+                    height: 26
+                    radius: 6
+                    color: dialog.typeFilter == index ? Theme.accentBg : typeArea.containsMouse ? Theme.hover : "transparent"
+                    Text {
+                        id: typeText
+                        anchors.centerIn: parent
+                        text: modelData
+                        font: Theme.sans(12, dialog.typeFilter == index ? 500 : 400)
+                        color: dialog.typeFilter == index ? Theme.accent : Theme.ink3
+                    }
+                    MouseArea {
+                        id: typeArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: { dialog.typeFilter = index; entries.currentIndex = -1 }
+                    }
+                }
+            }
+        }
+    }
+    TextField {
+        id: pattern
+        visible: dialog.typeFilter == 2
+        x: types.x + types.width + 10; y: dialog.height - 106
+        width: 220
+        height: 34
+        text: "[image] | *.txt"
+        placeholderText: "*.png | my*.*g | [image]"
+        color: dialog.patternError != "" ? Theme.redBg : Theme.bg
+        onTextEdited: entries.currentIndex = -1
+    }
     CheckBox {
-        x: 16
-        y: dialog.height - 74
+        x: dialog.typeFilter == 2 ? pattern.x + pattern.width + 16 : types.x + types.width + 16
+        y: dialog.height - 100
         text: "Show hidden files"
         checked: entries.showHidden
-        onToggled: entries.showHidden = checked
+        onToggled: { entries.showHidden = checked; entries.currentIndex = -1 }
     }
     Text {
-        x: 16
-        y: dialog.height - 42
-        width: dialog.width - 220
-        height: 30
+        anchors.right: parent.right
+        anchors.rightMargin: 20
+        y: dialog.height - 106
+        height: 34
+        text: "↑↓ to move · Enter to open · ⌫ to go up"
+        font: Theme.sans(12)
+        color: Theme.ink5
+    }
+
+    // What is chosen, what it is, and the two buttons.
+    Rectangle { x: 0; y: dialog.height - 62; width: dialog.width; height: 1; color: Theme.line }
+    FileIcon {
+        x: 20; y: dialog.height - 46
+        width: 34; height: 30
+        radius: 6
+        fontSize: 9
+        visible: dialog.hasSelection
+        kind: info.entry.kind
+        text: info.entry.badge
+    }
+    Text {
+        x: dialog.hasSelection ? 64 : 20
+        y: dialog.height - 50
+        width: dialog.width - 320
+        height: 20
         elide: Text.ElideRight
-        text: dialog.selectedName
-        font: Theme.sans(12, 400)
-        color: Theme.ink4
+        text: dialog.hasSelection ? info.entry.name : "No file selected"
+        font: Theme.sans(13, 500)
+        color: dialog.hasSelection ? Theme.ink : Theme.ink4
+    }
+    Text {
+        x: dialog.hasSelection ? 64 : 20
+        y: dialog.height - 30
+        width: dialog.width - 320
+        height: 18
+        elide: Text.ElideRight
+        text: !dialog.hasSelection ? (dialog.acceptedTypes != "" ? "Pick one of the ${dialog.acceptedNoun}" : "Pick a file")
+            : info.entry.isDir ? "Folder"
+            : info.refusal != "" ? info.refusal
+            : "${info.entry.kindLabel} · ${info.entry.sizeText}"
+        font: Theme.sans(12)
+        color: dialog.hasSelection && !info.entry.isDir && info.refusal != "" ? Theme.amberInk : Theme.ink4
     }
     Row {
         anchors.right: parent.right
-        anchors.rightMargin: 16
-        y: dialog.height - 46
-        spacing: 8
+        anchors.rightMargin: 20
+        y: dialog.height - 47
+        spacing: 10
         Button {
             text: "Cancel"
+            height: 34
             onClicked: { dialog.rejected(); dialog.close() }
         }
         Button {
-            text: "Open"
+            text: dialog.hasSelection && entries.current.isDir ? "Open folder" : dialog.openLabel
+            height: 34
             highlighted: true
-            enabled: dialog.selectedFile != ""
-            onClicked: { dialog.accepted(dialog.selectedFile); dialog.close() }
+            enabled: dialog.canOpen
+            onClicked: dialog.activate()
         }
     }
 }

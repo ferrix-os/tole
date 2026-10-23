@@ -76,13 +76,23 @@ component Popups : Rectangle {
     }
 }
 
+// The file chooser as the lode viewer's "Add machine" asks for a key: it
+// takes private keys, opens in ~/.ssh, and its places are where keys are
+// kept.
 component Chooser : Rectangle {
-    width: 640; height: 480
+    width: 1000; height: 700
     color: Theme.bg2
-    Label { x: 20; y: 20; text: "Add machine"; font: Theme.sans(18, 600) }
+    Label { x: 28; y: 22; text: "Add machine"; font: Theme.sans(24, 700); color: Theme.ink4 }
     FileDialog {
         id: chooser
         anchors.centerIn: parent
         title: "Choose the key file"
+        acceptedTypes: "[private]"
+        acceptedLabel: "Private keys"
+        acceptedNoun: "private keys"
+        openLabel: "Use key"
+        folder: "~/.ssh"
+        placeNames: ["Home", "Machine keys", ".ssh", "Downloads", "Pictures"]
+        placePaths: ["~", "~/machines/keys", "~/.ssh", "~/Downloads", "~/Pictures"]
     }
 }

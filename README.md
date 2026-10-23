@@ -577,7 +577,7 @@ component Transitions : Rectangle {
 `import Fx.Controls` brings the framework's controls: `Button`,
 `CheckBox`, `RadioButton`, `Switch`, `Label`, `ProgressBar`, `TabBar`,
 `GroupBox`, `TextField`, `TextArea`, `ComboBox`, `Menu` with `MenuItem`
-and `MenuSeparator`, `ScrollBar` and `FileDialog`, each a `.tole` file
+and `MenuSeparator`, `ScrollBar`, `FileIcon` and `FileDialog`, each a `.tole` file
 inside the compiler, written on the primitives as Qt Quick Controls are
 in QML. There is one style;
 every colour, radius and face in it is a token of the `Theme`
@@ -770,29 +770,95 @@ component Popups : Rectangle {
         }
     }
 }
-
-component Chooser : Rectangle {
-    width: 640; height: 480
-    color: Theme.bg2
-    Label { x: 20; y: 20; text: "Add machine"; font: Theme.sans(18, 600) }
-    FileDialog {
-        id: chooser
-        anchors.centerIn: parent
-        title: "Choose the key file"
-    }
-}
 ```
 
 ![popups](docs/screenshots/popups.png)
 
-The `FileDialog` lists a folder through a `FolderListModel` (folders
-first, hidden files on request): a double click opens a folder or
-chooses a file, Up goes to the folder above, and the path field takes a
-folder typed in, `~` and all. It is modal: the window behind is dimmed
-and takes no pointer while it is open. Here, dark, after a click on a
-key file:
+### The file chooser
 
-![file chooser](docs/screenshots/file-chooser.png)
+`FileDialog` is the chooser every tole program gets (the customer's
+"Key File Dialog" design): a modal dialog in the window, which takes the
+keys while it is open and gives them back when it closes. It shows the
+folder as a list (name, kind, size, when it changed) or a grid with
+thumbnails, with Up, breadcrumbs and places down the side; a preview of
+the file chosen -- the start of a text file, a picture, a folder's
+names, and a private key's first and last lines with its contents
+hidden; and a line at its foot saying what is chosen, or why it cannot
+be (a public key: "use the file without .pub").
+
+It takes what `acceptedTypes` says, a pattern: parts separated by `|`
+or `,`, `*` any text and `?` one character against the whole name, case
+aside, and `[kind]` by kind -- `image`, `private`, `public`, `text`,
+`archive`, `video`, `audio`, `document`, `folder`; a key is told by its
+first line, not its name. The filter at its foot shows only those, all
+files (the rest dimmed, and refused), or a pattern of one's own. The
+search reads its text in three modes, chosen from the menu in its
+field: the name contains it; a pattern as above; or a regular
+expression found in the name (`^id_.*$`, the compositor's RE2-like
+matcher). A pattern or expression that cannot be read says why in red,
+with how to write one. The keys: Up and Down move, Return opens a folder
+or chooses a file, Backspace goes up, Escape cancels.
+
+```qml
+// The file chooser as the lode viewer's "Add machine" asks for a key: it
+// takes private keys, opens in ~/.ssh, and its places are where keys are
+// kept.
+component Chooser : Rectangle {
+    width: 1000; height: 700
+    color: Theme.bg2
+    Label { x: 28; y: 22; text: "Add machine"; font: Theme.sans(24, 700); color: Theme.ink4 }
+    FileDialog {
+        id: chooser
+        anchors.centerIn: parent
+        title: "Choose the key file"
+        acceptedTypes: "[private]"
+        acceptedLabel: "Private keys"
+        acceptedNoun: "private keys"
+        openLabel: "Use key"
+        folder: "~/.ssh"
+        placeNames: ["Home", "Machine keys", ".ssh", "Downloads", "Pictures"]
+        placePaths: ["~", "~/machines/keys", "~/.ssh", "~/Downloads", "~/Pictures"]
+    }
+}
+```
+
+Dark, in `~/machines/keys` with a key chosen; light, `~/Pictures` as a
+grid under "All files", a picture chosen and refused. The folders are a
+home made for the pictures under the temporary folder, its clock fixed,
+so they do not change with the day they are drawn.
+
+![file chooser, dark](docs/screenshots/file-chooser-dark.png)
+
+![file chooser, light](docs/screenshots/file-chooser-light.png)
+
+`accepted(path)` says the file chosen, `rejected()` a cancel; the rest
+of its API is `title`, `folder`, `showHidden`, `acceptedTypes`,
+`acceptedLabel` and `acceptedNoun` (how the filter and the hints name
+them), `placeNames` and `placePaths`, `openLabel`, `typeFilter`,
+`customPattern`, `gridView`, `searchText`, `searchMode`, and
+`selectedFile`. A wallpaper picker is
+`acceptedTypes: "[image]"`, `acceptedLabel: "Pictures"`, `gridView:
+true`.
+
+It is built in markup on three things a file manager uses too:
+
+* **`FolderListModel`** reads a folder once and filters and sorts what
+  it read without reading it again: `nameFilter` and `filterMode`
+  (`FolderListModel.Basic`, `Advanced`, `Regex`), `accept` and
+  `acceptedOnly`, `sortField` (`Name`, `Size`, `Time`, `Type`) and
+  `sortReversed`, `revision` to read it again; it says `count`,
+  `totalSize`, `crumbs`, `displayPath`, `filterError` and `acceptError`,
+  and `current`, the row at `currentIndex`. Each row has `name`, `path`,
+  `isDir`, `size`, `sizeText`, `modified`, `kind`, `kindLabel`, `badge`,
+  `hidden`, `accepted`, `isImage` and, for a folder, `items`.
+* **`FileInfo`**: one file as a preview shows it -- its `entry`, its
+  `location`, the `text` shown of it (never a private key's contents),
+  and the `refusal` for an `accept` pattern that does not take it.
+* **`Image`**: a PNG, JPEG or SVG file drawn (`compositor-image`'s
+  decoders), `Image.Stretch`, `PreserveAspectFit` or
+  `PreserveAspectCrop`, decoded once at the pixels it covers and kept.
+
+`FileIcon` is the three-letter badge of a kind, in its colour.
 
 ### Charts and shapes
 

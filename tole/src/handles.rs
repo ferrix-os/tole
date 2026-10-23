@@ -4,7 +4,9 @@
 //! Each is `Copy`, so a binding closure captures the handles it reads by
 //! value.
 
-use crate::item::{CanvasProps, FolderProps, PopupProps, ShapeProps, SplitProps};
+use crate::item::{
+    CanvasProps, FileInfoProps, FolderProps, ImageProps, PopupProps, ShapeProps, SplitProps,
+};
 use crate::item::{
     Common, FlickProps, FlowProps, GridProps, ItemId, KindName, ListViewProps, MouseAreaProps,
     PositionerProps, RectangleProps, RepeaterProps, TextInputProps, TextProps,
@@ -126,6 +128,14 @@ handle!(
 handle!(
     /// A `FolderListModel`.
     FolderListModel, FolderListModel, FolderProps, folder_list
+);
+handle!(
+    /// A `FileInfo`.
+    FileInfo, FileInfo, FileInfoProps, file_info
+);
+handle!(
+    /// An `Image`.
+    Image, Image, ImageProps, image_item
 );
 handle!(
     /// A `TextInput`: one line typed into.

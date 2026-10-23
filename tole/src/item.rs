@@ -178,12 +178,88 @@ pub struct FolderProps {
     pub show_hidden: Prop<bool>,
     /// Whether files are listed, or folders only.
     pub show_files: Prop<bool>,
-    /// The entries, folders first, each sorted by name (read only).
+    /// The entries shown, folders first, sorted (read only).
     pub files: Prop<crate::model::ModelRc<crate::folder::FileEntry>>,
     /// The folder above, `""` at the top (read only).
     pub parent_folder: Prop<Rc<str>>,
     /// The folder, `~` worked out (read only).
     pub path: Prop<Rc<str>>,
+    /// The folder with the home folder written `~` (read only).
+    pub display_path: Prop<Rc<str>>,
+    /// The folders from `~` or `/` down to it, as breadcrumbs: each
+    /// entry's `name` and `path` (read only).
+    pub crumbs: Prop<crate::model::ModelRc<crate::folder::FileEntry>>,
+    /// The search over names, read as `filterMode` says.
+    pub name_filter: Prop<Rc<str>>,
+    /// `FolderListModel.Basic`, `Advanced` or `Regex`.
+    pub filter_mode: Prop<i32>,
+    /// Why the search cannot be read, or `""` (read only); while it
+    /// cannot, nothing is listed.
+    pub filter_error: Prop<Rc<str>>,
+    /// The pattern a file must match to be `accepted`
+    /// (`*.png | [image]`); `""` takes every file.
+    pub accept: Prop<Rc<str>>,
+    /// Why `accept` cannot be read, or `""` (read only); while it cannot,
+    /// no file is accepted.
+    pub accept_error: Prop<Rc<str>>,
+    /// Whether files `accept` does not take are left out.
+    pub accepted_only: Prop<bool>,
+    /// `FolderListModel.Name`, `Size`, `Time` or `Type`.
+    pub sort_field: Prop<i32>,
+    /// Whether the sort is turned round (folders stay first).
+    pub sort_reversed: Prop<bool>,
+    /// Changed to read the folder again.
+    pub revision: Prop<i32>,
+    /// How many entries are shown (read only).
+    pub count: Prop<i32>,
+    /// The bytes of the files shown (read only).
+    pub total_size: Prop<f32>,
+    /// The row chosen, -1 for none: set by the program, as a view's.
+    pub current_index: Prop<i32>,
+    /// The row at `currentIndex`, or an empty entry (read only).
+    pub current: Prop<crate::folder::FileEntry>,
+    /// What the folder read gave.
+    pub(crate) entries: Prop<crate::folder::Entries>,
+    /// What is shown of it.
+    pub(crate) rows: Prop<crate::folder::Entries>,
+}
+
+/// A `FileInfo`'s own properties: one file, as a preview shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileInfoProps {
+    /// The file; `~` at its start is the home folder.
+    pub path: Prop<Rc<str>>,
+    /// The pattern the file must match, as a `FolderListModel`'s.
+    pub accept: Prop<Rc<str>>,
+    /// Whether a folder's hidden entries are counted and shown.
+    pub show_hidden: Prop<bool>,
+    /// Changed to read the file again.
+    pub revision: Prop<i32>,
+    /// The file as a folder's entry (read only).
+    pub entry: Prop<crate::folder::FileEntry>,
+    /// Whether it is there (read only).
+    pub exists: Prop<bool>,
+    /// The folder it is in, `~` written for home (read only).
+    pub location: Prop<Rc<str>>,
+    /// What a preview shows of it in text (read only): the start of a
+    /// text file, a private key's first and last lines with dots for
+    /// the rest, a folder's names.
+    pub text: Prop<Rc<str>>,
+    /// Why `accept` does not take it, or `""` (read only).
+    pub refusal: Prop<Rc<str>>,
+}
+
+/// An `Image`'s own properties: a picture file drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImageProps {
+    /// The file: PNG, JPEG or SVG; `~` at its start is the home folder.
+    pub source: Prop<Rc<str>>,
+    /// `Image.Stretch`, `Image.PreserveAspectFit` or
+    /// `Image.PreserveAspectCrop`.
+    pub fill_mode: Prop<i32>,
+    /// `Image.Null` (no source), `Image.Ready` (a picture this draws) or
+    /// `Image.Error` (none there, or not PNG, JPEG or SVG) (read only).
+    pub status: Prop<i32>,
 }
 
 /// A `Row`'s or `Column`'s own properties.
@@ -316,6 +392,10 @@ pub enum Kind {
     SplitView(SplitProps),
     /// A `FolderListModel`: draws nothing, lists a folder.
     FolderListModel(FolderProps),
+    /// A `FileInfo`: draws nothing, tells about one file.
+    FileInfo(FileInfoProps),
+    /// An `Image`: a picture file, drawn.
+    Image(ImageProps),
     /// A `Canvas`: painted by a Rust function.
     Canvas(CanvasProps),
     /// A `Shape`: paths of lines and curves, filled and stroked.
@@ -402,6 +482,10 @@ pub enum KindName {
     SplitViewVertical,
     /// [`Kind::FolderListModel`].
     FolderListModel,
+    /// [`Kind::FileInfo`].
+    FileInfo,
+    /// [`Kind::Image`].
+    Image,
     /// [`Kind::Canvas`].
     Canvas,
     /// [`Kind::Shape`].
@@ -578,6 +662,8 @@ impl Ui {
                 vertical: kind == KindName::SplitViewVertical,
             }),
             KindName::FolderListModel => Kind::FolderListModel(self.folder_props()),
+            KindName::FileInfo => Kind::FileInfo(self.file_info_props()),
+            KindName::Image => Kind::Image(self.image_props()),
             KindName::Canvas => Kind::Canvas(CanvasProps {
                 painter: self.prop(crate::shape::CanvasPainter::default()),
                 revision: self.prop(0_i32),
@@ -1113,7 +1199,36 @@ fn props_of(data: &ItemData) -> Vec<crate::ui::PropId> {
             p.files.id,
             p.parent_folder.id,
             p.path.id,
+            p.display_path.id,
+            p.crumbs.id,
+            p.name_filter.id,
+            p.filter_mode.id,
+            p.filter_error.id,
+            p.accept.id,
+            p.accept_error.id,
+            p.accepted_only.id,
+            p.sort_field.id,
+            p.sort_reversed.id,
+            p.revision.id,
+            p.count.id,
+            p.total_size.id,
+            p.current_index.id,
+            p.current.id,
+            p.entries.id,
+            p.rows.id,
         ]),
+        Kind::FileInfo(p) => ids.extend([
+            p.path.id,
+            p.accept.id,
+            p.show_hidden.id,
+            p.revision.id,
+            p.entry.id,
+            p.exists.id,
+            p.location.id,
+            p.text.id,
+            p.refusal.id,
+        ]),
+        Kind::Image(p) => ids.extend([p.source.id, p.fill_mode.id, p.status.id]),
         Kind::TextInput(p) => ids.extend([
             p.text.id,
             p.color.id,

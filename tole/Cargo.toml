@@ -17,6 +17,12 @@ path = "src/lib.rs"
 wayland = ["dep:compositor-toolkit"]
 
 [dependencies]
+# Pictures for the `Image` item and the file chooser's preview: PNG, JPEG
+# and SVG into tiny-skia pixmaps, the desktop clients' own decoders.
+compositor-image = { path = "../../compositor/image" }
+# The file chooser's regular-expression search: the compositor's RE2-like
+# matcher, which gives up rather than hang on a pathological pattern.
+compositor-regex = { path = "../../compositor/regex" }
 compositor-toolkit = { path = "../../compositor/toolkit", optional = true }
 # Fonts, shaping and glyphs: the desktop's own text.
 compositor-text = { path = "../../compositor/text" }
