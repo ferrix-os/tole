@@ -89,6 +89,35 @@ pub fn fonts() -> Fonts {
     fonts
 }
 
+/// `demo` in a window on the Wayland desktop (`$WAYLAND_DISPLAY`), until
+/// it is closed.
+///
+/// # Errors
+///
+/// No compositor, or the connection failed.
+pub fn run_window(demo: &Demo) -> Result<(), String> {
+    let mut ui = Ui::new(fonts());
+    let root = (demo.make)(&mut ui).ok_or("the demo was not made")?;
+    let size = (
+        ui.get(root.width).round() as u32,
+        ui.get(root.height).round() as u32,
+    );
+    let options = tole::window::WindowOptions {
+        title: format!("tole: {}", demo.name),
+        app_id: "rocks.magical.tole-examples".to_owned(),
+        size,
+        background: Color::hex(0xff_ff_ff),
+    };
+    let mut window =
+        tole::window::Window::open(root, options).map_err(|error| error.to_string())?;
+    while !window.is_closed() {
+        let _ = window
+            .dispatch(&mut ui, None)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 /// `demo` drawn at `scale`, as a PNG file's bytes.
 #[must_use]
 pub fn render(demo: &Demo, scale: f32) -> Option<Vec<u8>> {

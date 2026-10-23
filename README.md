@@ -180,6 +180,23 @@ for emitted in ui.take_signals() {
 }
 ```
 
+### In a window
+
+Every demo also runs in a window on the Wayland desktop it is started
+on -- Ferrix's hyprix, or any other: tole's `wayland` feature opens a
+toplevel through Ferrix's own Wayland client runtime, pure Rust over the
+socket, with no libwayland.
+
+```sh
+cargo run -p tole-examples -- counter --window
+```
+
+Only what changed is drawn again: a frame is kept between draws, each
+item's drawing is compared with the last frame's, and the damaged parts
+alone are drawn and handed to the compositor. A test holds the kept
+frame to what drawing the whole scene gives, pixel for pixel, as a
+rounded box wanders at scales 1, 1.5 and 2.
+
 More come as the framework reaches them: controls, a 100,000-row list,
 states and transitions, the theme in light and dark, a chart, and the lode
 viewer ported onto tole.
@@ -188,7 +205,8 @@ viewer ported onto tole.
 
 * **`tole`**: the runtime. Property cells and bindings with dependency
   tracking, the item tree (`Item`, `Rectangle`, `Text`, `Row`, `Column`,
-  `MouseArea`), signals and handlers, the pointer's routing,
+  `MouseArea`), signals and handlers, the pointer's routing, damage and
+  partial redraw into a kept `Frame`, the window (`wayland` feature),
   anchors, the scene as drawing operations, the `Renderer` trait and the
   CPU renderer, typed handles for each kind of item, and `include_ui!` for
   the compiler's output.

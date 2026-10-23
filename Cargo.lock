@@ -39,6 +39,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
+name = "compositor-protocol"
+version = "0.1.0"
+dependencies = [
+ "compositor-wire",
+]
+
+[[package]]
+name = "compositor-shm"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "compositor-socket"
+version = "0.1.0"
+dependencies = [
+ "compositor-wire",
+ "libc",
+]
+
+[[package]]
 name = "compositor-text"
 version = "0.1.0"
 dependencies = [
@@ -48,6 +70,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "compositor-toolkit"
+version = "0.1.0"
+dependencies = [
+ "compositor-protocol",
+ "compositor-shm",
+ "compositor-socket",
+ "compositor-wire",
+ "compositor-xkb",
+ "libc",
+ "tiny-skia",
+]
+
+[[package]]
+name = "compositor-wire"
+version = "0.1.0"
+
+[[package]]
+name = "compositor-xkb"
+version = "0.1.0"
+
+[[package]]
 name = "core_maths"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -55,6 +98,12 @@ checksum = "77745e017f5edba1a9c1d854f6f3a52dac8a12dd5af5d2f54aecf61e43d80d30"
 dependencies = [
  "libm",
 ]
+
+[[package]]
+name = "libc"
+version = "0.2.191"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "libm"
@@ -137,6 +186,7 @@ name = "tole"
 version = "0.1.0"
 dependencies = [
  "compositor-text",
+ "compositor-toolkit",
  "miniz_oxide",
  "tiny-skia",
 ]

@@ -11,7 +11,13 @@ publish.workspace = true
 name = "tole"
 path = "src/lib.rs"
 
+[features]
+# The window: a toplevel through compositor-toolkit, Ferrix's own Wayland
+# client runtime, which also runs on any Wayland desktop (no libwayland).
+wayland = ["dep:compositor-toolkit"]
+
 [dependencies]
+compositor-toolkit = { path = "../../compositor/toolkit", optional = true }
 # Fonts, shaping and glyphs: the desktop's own text.
 compositor-text = { path = "../../compositor/text" }
 # What a frame is drawn with. The same exact pin as compositor-render and

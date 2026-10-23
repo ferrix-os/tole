@@ -1,5 +1,6 @@
 //! `tole-examples NAME --png FILE` draws one demo; `tole-examples --all
-//! DIR` draws every one into `DIR/NAME.png`, at scale 2.
+//! DIR` draws every one into `DIR/NAME.png`, at scale 2; `tole-examples
+//! NAME --window` opens it in a window on the Wayland desktop it runs on.
 
 use std::io::Write as _;
 use std::process::ExitCode;
@@ -19,6 +20,21 @@ fn main() -> ExitCode {
                 )
             })
             .collect(),
+        [name, window] if window == "--window" => {
+            return match DEMOS.iter().find(|demo| demo.name == name) {
+                Some(demo) => match tole_examples::run_window(demo) {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(error) => {
+                        let _ = writeln!(out, "{name}: {error}");
+                        ExitCode::FAILURE
+                    }
+                },
+                None => {
+                    let _ = writeln!(out, "no demo `{name}`");
+                    ExitCode::FAILURE
+                }
+            };
+        }
         [name, png, file] if png == "--png" => match DEMOS.iter().find(|demo| demo.name == name) {
             Some(demo) => vec![(demo, file.into())],
             None => {
@@ -27,7 +43,10 @@ fn main() -> ExitCode {
             }
         },
         _ => {
-            let _ = writeln!(out, "tole-examples NAME --png FILE | --all DIR");
+            let _ = writeln!(
+                out,
+                "tole-examples NAME --png FILE | NAME --window | --all DIR"
+            );
             for demo in &DEMOS {
                 let _ = writeln!(out, "  {:10} {}", demo.name, demo.about);
             }
