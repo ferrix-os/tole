@@ -16,6 +16,7 @@
 
 mod cpu;
 mod damage;
+mod focus;
 pub mod handles;
 mod input;
 mod item;
@@ -30,6 +31,7 @@ mod value;
 pub mod window;
 
 pub use cpu::CpuRenderer;
+pub use focus::{KeyEvent, Nav};
 pub use handles::Element;
 pub use item::{
     Common, ItemId, Kind, KindName, MouseAreaProps, PositionerProps, RectangleProps, TextProps,

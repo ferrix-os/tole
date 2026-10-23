@@ -43,6 +43,17 @@ pub struct Common {
     pub opacity: Prop<f32>,
     /// Whether its children are cut at its edges.
     pub clip: Prop<bool>,
+    /// Whether it and its children take input: a disabled item's
+    /// `MouseArea`s take no pointer and it takes no focus by Tab.
+    pub enabled: Prop<bool>,
+    /// Whether it holds the focus within its focus scope. Set through
+    /// [`Ui::set_focus`], which takes it from the one that held it.
+    pub focus: Prop<bool>,
+    /// Whether keys come to it: it, and every focus scope around it,
+    /// holds the focus (read only: [`Ui::force_active_focus`]).
+    pub active_focus: Prop<bool>,
+    /// Whether Tab and Shift+Tab stop at it.
+    pub active_focus_on_tab: Prop<bool>,
 }
 
 /// A `Rectangle`'s own properties.
@@ -100,13 +111,14 @@ pub enum Kind {
     /// A `MouseArea`: where the pointer presses, hovers and turns the
     /// wheel.
     MouseArea(MouseAreaProps),
+    /// A `FocusScope`: an `Item` within which one item at a time holds
+    /// the focus, kept while the focus is elsewhere.
+    FocusScope,
 }
 
 /// A `MouseArea`'s own properties and signals.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MouseAreaProps {
-    /// Whether it takes the pointer at all.
-    pub enabled: Prop<bool>,
     /// Whether it follows the pointer when no button is down.
     pub hover_enabled: Prop<bool>,
     /// Whether a press it took is held.
@@ -148,6 +160,8 @@ pub enum KindName {
     Column,
     /// [`Kind::MouseArea`].
     MouseArea,
+    /// [`Kind::FocusScope`].
+    FocusScope,
 }
 
 /// One item.
@@ -163,6 +177,11 @@ pub(crate) struct ItemData {
     pub(crate) children: Vec<ItemId>,
     /// Properties and signals a component declared on it, freed with it.
     pub(crate) owned: Vec<Owned>,
+    /// For a focus scope (or a root): which item within it holds the
+    /// focus.
+    pub(crate) focus_child: Option<ItemId>,
+    /// Its `Keys` and `KeyNavigation`, once the markup gave it either.
+    pub(crate) keys: Option<Box<crate::focus::KeysAttached>>,
 }
 
 /// What an item holds for a component.
@@ -202,12 +221,17 @@ impl Ui {
             visible: self.prop(true),
             opacity: self.prop(1.0_f32),
             clip: self.prop(false),
+            enabled: self.prop(true),
+            focus: self.prop(false),
+            active_focus: self.prop(false),
+            active_focus_on_tab: self.prop(false),
         };
         let (implicit_width, implicit_height) = (common.implicit_width, common.implicit_height);
         common.width.bind(self, move |ui| ui.get(implicit_width));
         common.height.bind(self, move |ui| ui.get(implicit_height));
         let kind = match kind {
             KindName::Item => Kind::Item,
+            KindName::FocusScope => Kind::FocusScope,
             KindName::Rectangle => Kind::Rectangle(RectangleProps {
                 color: self.prop(Color::hex(0xff_ff_ff)),
                 radius: self.prop(0.0_f32),
@@ -246,7 +270,6 @@ impl Ui {
                 }
             }
             KindName::MouseArea => Kind::MouseArea(MouseAreaProps {
-                enabled: self.prop(true),
                 hover_enabled: self.prop(false),
                 pressed: self.prop(false),
                 contains_mouse: self.prop(false),
@@ -266,6 +289,8 @@ impl Ui {
             parent,
             children: Vec::new(),
             owned: Vec::new(),
+            focus_child: None,
+            keys: None,
         };
         let id = self.place(data);
         match parent {
@@ -322,6 +347,11 @@ impl Ui {
                     self.free_signal(signal);
                 }
             }
+            if let Some(keys) = &data.keys {
+                for signal in keys.signals() {
+                    self.free_signal(signal);
+                }
+            }
             self.forget_input(id);
             self.free_items.push(id.index);
         }
@@ -334,6 +364,7 @@ impl Ui {
             }
             None => self.roots.retain(|&root| root != item),
         }
+        self.forget_focus();
     }
 
     /// Whether `item` lives.
@@ -438,7 +469,7 @@ impl Ui {
     }
 
     /// The same, to change.
-    fn item_mut(&mut self, id: ItemId) -> Option<&mut ItemData> {
+    pub(crate) fn item_mut(&mut self, id: ItemId) -> Option<&mut ItemData> {
         self.items
             .get_mut(id.index as usize)
             .filter(|slot| slot.generation == id.generation)
@@ -488,9 +519,13 @@ fn props_of(data: &ItemData) -> Vec<crate::ui::PropId> {
         c.visible.id,
         c.opacity.id,
         c.clip.id,
+        c.enabled.id,
+        c.focus.id,
+        c.active_focus.id,
+        c.active_focus_on_tab.id,
     ];
     match data.kind {
-        Kind::Item => {}
+        Kind::Item | Kind::FocusScope => {}
         Kind::Rectangle(p) => ids.extend([
             p.color.id,
             p.radius.id,
@@ -507,7 +542,6 @@ fn props_of(data: &ItemData) -> Vec<crate::ui::PropId> {
         ]),
         Kind::Row(p) | Kind::Column(p) => ids.extend([p.spacing.id, p.padding.id]),
         Kind::MouseArea(p) => ids.extend([
-            p.enabled.id,
             p.hover_enabled.id,
             p.pressed.id,
             p.contains_mouse.id,

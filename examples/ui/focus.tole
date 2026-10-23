@@ -1,0 +1,55 @@
+// Focus and keys: Tab and Shift+Tab walk the tiles in tree order, the
+// arrows move as KeyNavigation says, and Space or a click toggles a tile.
+// The ring is a binding on `activeFocus`.
+import Fx
+
+component Tile : Rectangle {
+    id: tile
+    property string label
+    property bool on
+
+    activeFocusOnTab: true
+    width: 128; height: 64
+    radius: 10
+    color: on ? "#2a62c9" : "white"
+    border { width: activeFocus ? 3 : 1; color: activeFocus ? "#e9a91c" : "#d6d6d0" }
+
+    Text {
+        anchors.centerIn: parent
+        text: label
+        color: tile.on ? "white" : "#1a1a1a"
+        font: font("Inter", 14, 600)
+    }
+    Keys.onSpacePressed: on = !on
+    MouseArea {
+        anchors.fill: parent
+        onClicked: { tile.forceActiveFocus(); tile.on = !tile.on }
+    }
+}
+
+component Focus : Rectangle {
+    width: 460; height: 236
+    color: "#fafaf8"
+
+    Column {
+        anchors.centerIn: parent
+        spacing: 12
+        Row {
+            spacing: 12
+            Tile { id: wifi; label: "Wi-Fi"; KeyNavigation.right: bluetooth; KeyNavigation.down: dark }
+            Tile { id: bluetooth; label: "Bluetooth"; KeyNavigation.left: wifi; KeyNavigation.right: vpn; KeyNavigation.down: night }
+            Tile { id: vpn; label: "VPN"; KeyNavigation.left: bluetooth; KeyNavigation.down: quiet }
+        }
+        Row {
+            spacing: 12
+            Tile { id: dark; label: "Dark"; KeyNavigation.up: wifi; KeyNavigation.right: night }
+            Tile { id: night; label: "Night light"; KeyNavigation.up: bluetooth; KeyNavigation.left: dark; KeyNavigation.right: quiet }
+            Tile { id: quiet; label: "Quiet"; KeyNavigation.up: vpn; KeyNavigation.left: night }
+        }
+        Text {
+            text: "Tab and the arrows move the focus; Space toggles"
+            font: font("Inter", 12, 400)
+            color: "#888888"
+        }
+    }
+}

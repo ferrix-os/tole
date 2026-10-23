@@ -176,7 +176,8 @@ impl Ui {
         out
     }
 
-    /// [`Ui::areas_at`] under `item`.
+    /// [`Ui::areas_at`] under `item`. A disabled or hidden item hides its
+    /// whole subtree from the pointer.
     fn areas_in(
         &mut self,
         item: ItemId,
@@ -188,7 +189,7 @@ impl Ui {
         let Some(common) = self.common(item) else {
             return;
         };
-        if !self.get(common.visible) {
+        if !self.get(common.visible) || !self.get(common.enabled) {
             return;
         }
         let rect = Rect::new(
@@ -201,7 +202,6 @@ impl Ui {
         if let Some(Kind::MouseArea(area)) = self.kind(item)
             && inside_clip
             && rect.contains(point.0, point.1)
-            && self.get(area.enabled)
         {
             out.push((item, area));
         }

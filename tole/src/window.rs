@@ -11,7 +11,9 @@
 
 use std::time::Duration;
 
-use compositor_toolkit::{Client, Error, Event, PointerEvent, SurfaceId, ToplevelOptions};
+use compositor_toolkit::{
+    Client, Error, Event, KeyboardEvent, PointerEvent, SurfaceId, ToplevelOptions,
+};
 
 use crate::Frame;
 use crate::item::Common;
@@ -153,6 +155,7 @@ impl Window {
                     rest.push(event);
                 }
                 Event::Pointer(pointer) => self.pointer(ui, pointer, &mut rest),
+                Event::Keyboard(keyboard) => self.keyboard(ui, keyboard, &mut rest),
                 other => rest.push(other),
             }
         }
@@ -192,6 +195,39 @@ impl Window {
             } if ours(surface) => ui.pointer_wheel(vertical as f32),
             _ => rest.push(Event::Pointer(pointer)),
         }
+    }
+
+    /// A keyboard event: this window's keys go to the `Ui`, and those it
+    /// does not take back to the program.
+    fn keyboard(&mut self, ui: &mut Ui, keyboard: KeyboardEvent, rest: &mut Vec<Event>) {
+        match &keyboard {
+            KeyboardEvent::Enter(surface) if *surface == self.surface => {
+                ui.set_window_active(true);
+            }
+            KeyboardEvent::Leave(surface) if *surface == self.surface => {
+                ui.set_window_active(false);
+            }
+            KeyboardEvent::Key(key) if key.surface.is_none_or(|s| s == self.surface) => {
+                let event = crate::KeyEvent {
+                    key: std::rc::Rc::from(key.keysym.unwrap_or("")),
+                    text: std::rc::Rc::from(key.text.as_str()),
+                    shift: key.modifiers.shift,
+                    control: key.modifiers.control,
+                    alt: key.modifiers.alt,
+                    repeat: key.repeat,
+                };
+                let taken = if key.pressed {
+                    ui.key_press(&event)
+                } else {
+                    ui.key_release(&event)
+                };
+                if taken {
+                    return;
+                }
+            }
+            _ => {}
+        }
+        rest.push(Event::Keyboard(keyboard));
     }
 
     /// Draw what changed and hand it over.

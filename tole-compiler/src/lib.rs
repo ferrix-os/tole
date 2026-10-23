@@ -13,7 +13,9 @@
 //! `Column`; ids and `parent`; declared properties; bindings in a typed
 //! expression language (literals, `${}` strings, arithmetic, comparisons,
 //! `? :`, enum values, struct fields, built-in and the component's own
-//! functions); grouped properties (`border { width: 1 }`); anchors.
+//! functions); grouped properties (`border { width: 1 }`); anchors;
+//! signals and handlers (U3a); focus, `Keys.on...` handlers with their
+//! `event`, `KeyNavigation` and `forceActiveFocus()` (U3c).
 
 mod emit;
 mod lexer;

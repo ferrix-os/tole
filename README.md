@@ -180,6 +180,77 @@ for emitted in ui.take_signals() {
 }
 ```
 
+### Focus and keys
+
+Focus as Qt Quick has it: one item at a time holds `focus` within its
+focus scope, keys go to the item with `activeFocus` and bubble up until a
+handler takes them, Tab and Shift+Tab walk the items with
+`activeFocusOnTab` in tree order, and `KeyNavigation` sends the arrows
+where it says. `Keys.onSpacePressed` takes its key; `Keys.onPressed` takes
+one by `event.accepted = true`. Keys are named as xkb names them
+(`event.key == "Return"`). The picture is after Tab, Space, Right, Right,
+Space and Down.
+
+```qml
+// Focus and keys: Tab and Shift+Tab walk the tiles in tree order, the
+// arrows move as KeyNavigation says, and Space or a click toggles a tile.
+// The ring is a binding on `activeFocus`.
+import Fx
+
+component Tile : Rectangle {
+    id: tile
+    property string label
+    property bool on
+
+    activeFocusOnTab: true
+    width: 128; height: 64
+    radius: 10
+    color: on ? "#2a62c9" : "white"
+    border { width: activeFocus ? 3 : 1; color: activeFocus ? "#e9a91c" : "#d6d6d0" }
+
+    Text {
+        anchors.centerIn: parent
+        text: label
+        color: tile.on ? "white" : "#1a1a1a"
+        font: font("Inter", 14, 600)
+    }
+    Keys.onSpacePressed: on = !on
+    MouseArea {
+        anchors.fill: parent
+        onClicked: { tile.forceActiveFocus(); tile.on = !tile.on }
+    }
+}
+
+component Focus : Rectangle {
+    width: 460; height: 236
+    color: "#fafaf8"
+
+    Column {
+        anchors.centerIn: parent
+        spacing: 12
+        Row {
+            spacing: 12
+            Tile { id: wifi; label: "Wi-Fi"; KeyNavigation.right: bluetooth; KeyNavigation.down: dark }
+            Tile { id: bluetooth; label: "Bluetooth"; KeyNavigation.left: wifi; KeyNavigation.right: vpn; KeyNavigation.down: night }
+            Tile { id: vpn; label: "VPN"; KeyNavigation.left: bluetooth; KeyNavigation.down: quiet }
+        }
+        Row {
+            spacing: 12
+            Tile { id: dark; label: "Dark"; KeyNavigation.up: wifi; KeyNavigation.right: night }
+            Tile { id: night; label: "Night light"; KeyNavigation.up: bluetooth; KeyNavigation.left: dark; KeyNavigation.right: quiet }
+            Tile { id: quiet; label: "Quiet"; KeyNavigation.up: vpn; KeyNavigation.left: night }
+        }
+        Text {
+            text: "Tab and the arrows move the focus; Space toggles"
+            font: font("Inter", 12, 400)
+            color: "#888888"
+        }
+    }
+}
+```
+
+![focus](docs/screenshots/focus.png)
+
 ### In a window
 
 Every demo also runs in a window on the Wayland desktop it is started
@@ -205,7 +276,8 @@ viewer ported onto tole.
 
 * **`tole`**: the runtime. Property cells and bindings with dependency
   tracking, the item tree (`Item`, `Rectangle`, `Text`, `Row`, `Column`,
-  `MouseArea`), signals and handlers, the pointer's routing, damage and
+  `MouseArea`, `FocusScope`), signals and handlers, the pointer's
+  routing, focus, keys and the Tab order, damage and
   partial redraw into a kept `Frame`, the window (`wayland` feature),
   anchors, the scene as drawing operations, the `Renderer` trait and the
   CPU renderer, typed handles for each kind of item, and `include_ui!` for

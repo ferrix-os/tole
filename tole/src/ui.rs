@@ -134,6 +134,8 @@ pub struct Ui {
     pub(crate) signals: crate::signal::Signals,
     /// Where the pointer is and what it holds.
     pub(crate) input: crate::input::Input,
+    /// Which items have the focus.
+    pub(crate) focus: crate::focus::Focus,
 }
 
 impl fmt::Debug for Ui {
@@ -170,6 +172,7 @@ impl Ui {
             changed: true,
             signals: crate::signal::Signals::default(),
             input: crate::input::Input::default(),
+            focus: crate::focus::Focus::default(),
         };
         ui.scale = ui.prop(1.0_f32);
         ui

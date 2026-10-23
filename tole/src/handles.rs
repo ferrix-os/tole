@@ -71,31 +71,42 @@ handle!(
     Column, Column, PositionerProps, positioner
 );
 
-/// A plain `Item`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Item {
-    /// The item.
-    pub id: ItemId,
-    /// Its common properties.
-    pub common: Common,
+/// A handle with no properties of its kind's own.
+macro_rules! plain_handle {
+    ($(#[$doc:meta])* $name:ident) => {
+        $(#[$doc])*
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub struct $name {
+            /// The item.
+            pub id: ItemId,
+            /// Its common properties.
+            pub common: Common,
+        }
+
+        impl $name {
+            /// A new one under `parent`, or a root.
+            pub fn new(ui: &mut Ui, parent: Option<ItemId>) -> Option<Self> {
+                let id = ui.create(KindName::$name, parent)?;
+                Some($name { id, common: ui.common(id)? })
+            }
+        }
+
+        impl Element for $name {
+            fn id(&self) -> ItemId {
+                self.id
+            }
+            fn common(&self) -> Common {
+                self.common
+            }
+        }
+    };
 }
 
-impl Item {
-    /// A new one under `parent`, or a root.
-    pub fn new(ui: &mut Ui, parent: Option<ItemId>) -> Option<Self> {
-        let id = ui.create(KindName::Item, parent)?;
-        Some(Item {
-            id,
-            common: ui.common(id)?,
-        })
-    }
-}
-
-impl Element for Item {
-    fn id(&self) -> ItemId {
-        self.id
-    }
-    fn common(&self) -> Common {
-        self.common
-    }
-}
+plain_handle!(
+    /// A plain `Item`.
+    Item
+);
+plain_handle!(
+    /// A `FocusScope`.
+    FocusScope
+);

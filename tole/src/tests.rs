@@ -630,7 +630,7 @@ fn hover_enters_and_exits_and_a_clip_hides_what_it_cuts() {
     ui.pointer_move(90.0, 10.0);
     assert!(emitted(&mut ui).is_empty());
     // A disabled area takes nothing.
-    a.props.enabled.set(&mut ui, false);
+    a.common.enabled.set(&mut ui, false);
     ui.pointer_press();
     ui.pointer_release();
     assert!(emitted(&mut ui).is_empty());
@@ -809,4 +809,158 @@ fn a_kept_frame_matches_a_whole_one_as_a_rounded_box_wanders() {
             assert_eq!(worst, Some(0), "scale {scale}, step {step}");
         }
     }
+}
+
+/// A plain item under `parent` that Tab stops at.
+fn stop(ui: &mut Ui, parent: crate::ItemId) -> crate::handles::Item {
+    let item = crate::handles::Item::new(ui, Some(parent)).unwrap();
+    item.common.active_focus_on_tab.set(ui, true);
+    item
+}
+
+#[test]
+fn focus_moves_within_a_scope_and_a_scope_keeps_its_own() {
+    let mut ui = bare();
+    let root = crate::handles::Item::new(&mut ui, None).unwrap();
+    let a = crate::handles::Item::new(&mut ui, Some(root.id)).unwrap();
+    let scope = crate::handles::FocusScope::new(&mut ui, Some(root.id)).unwrap();
+    let inner = crate::handles::Item::new(&mut ui, Some(scope.id)).unwrap();
+    let other = crate::handles::Item::new(&mut ui, Some(scope.id)).unwrap();
+
+    ui.set_focus(a.id, true);
+    assert!(ui.get(a.common.focus) && ui.get(a.common.active_focus));
+    assert_eq!(ui.active_focus_item(), Some(a.id));
+
+    // Focus inside the scope is kept there, but keys still go to `a`.
+    ui.set_focus(inner.id, true);
+    assert!(ui.get(inner.common.focus));
+    assert!(!ui.get(inner.common.active_focus));
+    assert_eq!(ui.active_focus_item(), Some(a.id));
+
+    // The scope takes the focus from `a`, and its own focused item has
+    // the active focus with it.
+    ui.set_focus(scope.id, true);
+    assert!(!ui.get(a.common.focus) && !ui.get(a.common.active_focus));
+    assert!(ui.get(scope.common.active_focus) && ui.get(inner.common.active_focus));
+    assert_eq!(ui.active_focus_item(), Some(inner.id));
+
+    // Within it, one at a time.
+    ui.set_focus(other.id, true);
+    assert!(!ui.get(inner.common.focus) && !ui.get(inner.common.active_focus));
+    assert_eq!(ui.active_focus_item(), Some(other.id));
+
+    // forceActiveFocus reaches through every scope.
+    ui.force_active_focus(a.id);
+    assert_eq!(ui.active_focus_item(), Some(a.id));
+    ui.force_active_focus(inner.id);
+    assert_eq!(ui.active_focus_item(), Some(inner.id));
+    assert!(ui.get(scope.common.focus));
+
+    // The window losing the keyboard takes the active focus, not the
+    // focus.
+    ui.set_window_active(false);
+    assert!(!ui.get(inner.common.active_focus) && ui.get(inner.common.focus));
+    ui.set_window_active(true);
+    assert!(ui.get(inner.common.active_focus));
+
+    // An item that goes takes its active focus with it.
+    ui.destroy(inner.id);
+    assert_eq!(ui.active_focus_item(), Some(scope.id));
+    assert!(ui.get(scope.common.active_focus));
+}
+
+#[test]
+fn keys_go_to_the_focus_then_up_until_one_accepts() {
+    let mut ui = bare();
+    let root = crate::handles::Item::new(&mut ui, None).unwrap();
+    let field = crate::handles::Item::new(&mut ui, Some(root.id)).unwrap();
+    let heard = Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+
+    // The root hears everything that bubbles up to it.
+    let on_root = ui.keys_pressed(root.id).unwrap();
+    let log = Rc::clone(&heard);
+    ui.connect(
+        on_root,
+        Rc::new(move |_ui: &mut Ui, args: &[crate::Value]| {
+            let event = args[0].downcast::<crate::KeyEvent>().unwrap();
+            log.borrow_mut().push(format!("root {}", event.key));
+        }),
+    );
+    // The field takes letters by accepting them, and Return by its own
+    // handler.
+    let on_field = ui.keys_pressed(field.id).unwrap();
+    let log = Rc::clone(&heard);
+    ui.connect(
+        on_field,
+        Rc::new(move |ui: &mut Ui, args: &[crate::Value]| {
+            let event = args[0].downcast::<crate::KeyEvent>().unwrap();
+            log.borrow_mut().push(format!("field {}", event.key));
+            if !event.text.is_empty() {
+                ui.accept_key(true);
+            }
+        }),
+    );
+    let on_return = ui.keys_key_pressed(field.id, "Return").unwrap();
+    let log = Rc::clone(&heard);
+    ui.connect(
+        on_return,
+        Rc::new(move |_ui: &mut Ui, _args: &[crate::Value]| {
+            log.borrow_mut().push("field Return!".to_owned());
+        }),
+    );
+
+    // Nothing has the focus: keys go to the root.
+    assert!(!ui.key_press(&crate::KeyEvent::named("a")));
+    ui.set_focus(field.id, true);
+    assert!(ui.key_press(&crate::KeyEvent::named("a")));
+    assert!(ui.key_press(&crate::KeyEvent::named("Return")));
+    assert!(!ui.key_press(&crate::KeyEvent::named("Escape")));
+    assert_eq!(
+        *heard.borrow(),
+        [
+            "root a",
+            "field a",
+            "field Return!",
+            "field Escape",
+            "root Escape"
+        ]
+    );
+}
+
+#[test]
+fn tab_walks_the_stops_in_tree_order_and_key_navigation_jumps() {
+    let mut ui = bare();
+    let root = crate::handles::Item::new(&mut ui, None).unwrap();
+    let a = stop(&mut ui, root.id);
+    let group = crate::handles::Item::new(&mut ui, Some(root.id)).unwrap();
+    let b = stop(&mut ui, group.id);
+    let hidden = stop(&mut ui, group.id);
+    hidden.common.visible.set(&mut ui, false);
+    let c = stop(&mut ui, root.id);
+    let disabled = stop(&mut ui, root.id);
+    disabled.common.enabled.set(&mut ui, false);
+    let tab = crate::KeyEvent::named("Tab");
+    let backtab = crate::KeyEvent::named("ISO_Left_Tab");
+
+    let mut order = Vec::new();
+    for _ in 0..4 {
+        assert!(ui.key_press(&tab));
+        order.push(ui.active_focus_item().unwrap());
+    }
+    assert_eq!(order, [a.id, b.id, c.id, a.id], "in tree order, wrapping");
+    assert!(ui.key_press(&backtab));
+    assert_eq!(ui.active_focus_item(), Some(c.id));
+    assert!(ui.key_press(&crate::KeyEvent::named("Tab").shifted()));
+    assert_eq!(ui.active_focus_item(), Some(b.id));
+    assert!(ui.get(b.common.active_focus) && !ui.get(c.common.active_focus));
+
+    // KeyNavigation goes where it says, Tab included.
+    ui.set_key_navigation(b.id, crate::Nav::Down, a.id);
+    ui.set_key_navigation(b.id, crate::Nav::Tab, a.id);
+    assert!(ui.key_press(&crate::KeyEvent::named("Down")));
+    assert_eq!(ui.active_focus_item(), Some(a.id));
+    ui.force_active_focus(b.id);
+    assert!(ui.key_press(&tab));
+    assert_eq!(ui.active_focus_item(), Some(a.id));
+    assert!(!ui.key_press(&crate::KeyEvent::named("Up")), "a has none");
 }

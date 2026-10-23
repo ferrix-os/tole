@@ -264,3 +264,53 @@ fn bad_handlers_are_refused() {
         "2:25: this handler emits the `clicked` it handles, again and again: name the component's root by its id (`root.clicked()`)"
     );
 }
+
+#[test]
+fn focus_keys_and_key_navigation() {
+    let rust = accepted(
+        "component A : FocusScope {
+            Item { id: a; focus: true; activeFocusOnTab: true; KeyNavigation.down: b
+                Keys.onPressed: { if (event.text == \"q\") { event.accepted = true; b.forceActiveFocus() } }
+                Keys.onReturnPressed: b.focus = true }
+            Item { id: b; enabled: !a.activeFocus }
+        }",
+    );
+    for want in [
+        "ui.set_focus(::tole::Element::id(&e1), true);",
+        "ui.set_key_navigation(::tole::Element::id(&e1), ::tole::Nav::Down, ::tole::Element::id(&e2));",
+        "ui.keys_pressed(::tole::Element::id(&e1))",
+        "ui.keys_key_pressed(::tole::Element::id(&e1), \"Return\")",
+        "ui.accept_key(true);",
+        "ui.force_active_focus(::tole::Element::id(&e2));",
+        "ui.set_focus(::tole::Element::id(&e2), on);",
+        "((event).text == ::std::rc::Rc::<str>::from(\"q\"))",
+        "ui.get(e1.common.active_focus)",
+        "::tole::handles::FocusScope::new(ui, parent)",
+    ] {
+        assert!(rust.contains(want), "{want}\n{rust}");
+    }
+}
+
+#[test]
+fn bad_focus_and_keys_are_refused() {
+    assert_eq!(
+        refused("component A : Item { property bool f\n focus: f }"),
+        "2:9: `focus` is given as `true` or `false`; a handler moves it (`other.focus = true`, `forceActiveFocus()`)"
+    );
+    assert_eq!(
+        refused("component A : Item { Keys.onHelloPressed: x = 1 }"),
+        "1:27: `Keys` has no signal `helloPressed`"
+    );
+    assert_eq!(
+        refused("component A : Item { Mouse.onPressed: x = 1 }"),
+        "1:22: `Mouse` has no signals: `Keys` has"
+    );
+    assert_eq!(
+        refused("component A : Item { KeyNavigation.tab: 3 }"),
+        "1:41: `KeyNavigation` names an id"
+    );
+    assert_eq!(
+        refused("component A : Item { KeyNavigation.sideways: a }"),
+        "1:36: `KeyNavigation` has `tab`, `backtab`, `up`, `down`, `left` and `right`"
+    );
+}

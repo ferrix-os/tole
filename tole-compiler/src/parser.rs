@@ -84,8 +84,13 @@ pub(crate) enum Member {
         name: Ident,
         params: Vec<(Ident, Ident)>,
     },
-    /// `onName: statements`.
-    Handler { signal: Ident, body: Vec<Stmt> },
+    /// `onName: statements`, or `Keys.onName: statements` for an attached
+    /// object's signal.
+    Handler {
+        attached: Option<Ident>,
+        signal: Ident,
+        body: Vec<Stmt>,
+    },
 }
 
 /// A statement of a handler.
@@ -415,7 +420,11 @@ impl Parser<'_> {
             && self.eat(":")
         {
             let body = self.block()?;
-            return Ok(vec![Member::Handler { signal, body }]);
+            return Ok(vec![Member::Handler {
+                attached: None,
+                signal,
+                body,
+            }]);
         }
         let starts_upper = first.text.chars().next().is_some_and(char::is_uppercase);
         if starts_upper && matches!(self.peek(), Tok::Punct("{") | Tok::Newline) {
@@ -424,6 +433,19 @@ impl Parser<'_> {
         let mut path = vec![first];
         while self.eat(".") {
             path.push(self.ident()?);
+        }
+        if let [attached, second] = path.as_slice()
+            && attached.text.chars().next().is_some_and(char::is_uppercase)
+            && let Some(signal) = handler_name(second)
+            && self.eat(":")
+        {
+            let attached = Some(attached.clone());
+            let body = self.block()?;
+            return Ok(vec![Member::Handler {
+                attached,
+                signal,
+                body,
+            }]);
         }
         if matches!(self.peek(), Tok::Punct("{")) {
             // A group: border { width: 1; color: ... }.

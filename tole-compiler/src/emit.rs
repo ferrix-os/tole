@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 
 use crate::parser::{Decl, Element, Expr, File, Ident, Member, Stmt, StrPart};
-use crate::types::{Kind, Ty, builtin_constant, named_color, snake};
+use crate::types::{Kind, Ty, builtin_constant, keys_handler_keysym, named_color, snake};
 use crate::{Diagnostic, Pos};
 
 /// What an element is: a kind of item or a component.
@@ -589,10 +589,14 @@ impl Program {
         scope: &Scope<'_>,
         var: &str,
         ty: &ElemTy,
+        attached: Option<&Ident>,
         signal: &Ident,
         body: &[Stmt],
     ) -> Result<String, Diagnostic> {
         let file = scope.file;
+        if let Some(attached) = attached {
+            return self.keys_handler(scope, var, attached, signal, body);
+        }
         let (rust, params) = self.signal(ty, &signal.text).ok_or_else(|| {
             diag(
                 file,
@@ -642,14 +646,144 @@ impl Program {
         ))
     }
 
+    /// `Keys.onPressed: ...` and the rest on the element in `var`: the
+    /// signal made on first use, `event` its argument.
+    fn keys_handler(
+        &self,
+        scope: &Scope<'_>,
+        var: &str,
+        attached: &Ident,
+        signal: &Ident,
+        body: &[Stmt],
+    ) -> Result<String, Diagnostic> {
+        let file = scope.file;
+        if attached.text != "Keys" {
+            return Err(diag(
+                file,
+                attached.pos,
+                &format!("`{}` has no signals: `Keys` has", attached.text),
+            ));
+        }
+        let id = format!("::tole::Element::id(&{var})");
+        let make = match signal.text.as_str() {
+            "pressed" => format!("ui.keys_pressed({id})"),
+            "released" => format!("ui.keys_released({id})"),
+            other => match keys_handler_keysym(other) {
+                Some(keysym) => format!("ui.keys_key_pressed({id}, {keysym:?})"),
+                None => {
+                    return Err(diag(
+                        file,
+                        signal.pos,
+                        &format!("`Keys` has no signal `{other}`"),
+                    ));
+                }
+            },
+        };
+        let params = [("event".to_owned(), Ty::KeyEvent)];
+        let inner = Scope {
+            component: scope.component,
+            this: scope.this,
+            ids: scope.ids,
+            current: scope.current.clone(),
+            parent: scope.parent.clone(),
+            params: &params,
+            file,
+        };
+        let statements = self.statements(&inner, body)?;
+        Ok(format!(
+            "        if let ::core::option::Option::Some(signal) = {make} {{ ui.connect(signal, ::std::rc::Rc::new(move |ui: &mut ::tole::Ui, args: &[::tole::Value]| {{ let event: ::tole::KeyEvent = args.first().and_then(<::tole::KeyEvent as ::tole::PropType>::from_value).unwrap_or_default(); let _ = &event; {statements}}})); }}\n"
+        ))
+    }
+
+    /// `KeyNavigation.tab: other` on the element in `var`.
+    fn key_navigation(
+        &self,
+        scope: &Scope<'_>,
+        var: &str,
+        path: &[Ident],
+        expr: &Expr,
+    ) -> Result<String, Diagnostic> {
+        let file = scope.file;
+        let at = path.first().map_or(expr.pos(), |p| p.pos);
+        let nav = match path {
+            [_, which] => match which.text.as_str() {
+                "tab" => "Tab",
+                "backtab" => "Backtab",
+                "up" => "Up",
+                "down" => "Down",
+                "left" => "Left",
+                "right" => "Right",
+                _ => {
+                    return Err(diag(
+                        file,
+                        which.pos,
+                        "`KeyNavigation` has `tab`, `backtab`, `up`, `down`, `left` and `right`",
+                    ));
+                }
+            },
+            _ => return Err(diag(file, at, "`KeyNavigation.tab: other`")),
+        };
+        let target = match expr {
+            Expr::Path(names) => match names.as_slice() {
+                [one] => scope.ids.get(&one.text).map(|(v, _)| v.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+        .ok_or_else(|| diag(file, expr.pos(), "`KeyNavigation` names an id"))?;
+        Ok(format!(
+            "        ui.set_key_navigation(::tole::Element::id(&{var}), ::tole::Nav::{nav}, ::tole::Element::id(&{target}));\n"
+        ))
+    }
+
+    /// The item a `forceActiveFocus()` call is on: the element, or an id
+    /// or `parent` before it.
+    fn focus_call(&self, scope: &Scope<'_>, path: &[Ident]) -> Option<String> {
+        match path {
+            [call] if call.text == "forceActiveFocus" => {
+                scope.current.as_ref().map(|(v, _)| v.clone())
+            }
+            [item, call] if call.text == "forceActiveFocus" => {
+                if item.text == "parent" {
+                    match &scope.parent {
+                        Some(Target::Static(v, _)) => Some(v.clone()),
+                        _ => None,
+                    }
+                } else {
+                    scope.ids.get(&item.text).map(|(v, _)| v.clone())
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// A handler's statements.
     fn statements(&self, scope: &Scope<'_>, body: &[Stmt]) -> Result<String, Diagnostic> {
         let file = scope.file;
         let mut out = String::new();
         for statement in body {
             match statement {
+                Stmt::Assign(path, expr)
+                    if matches!(path.as_slice(), [event, field]
+                        if field.text == "accepted"
+                        && scope.params.iter().any(|(p, t)| *p == event.text && *t == Ty::KeyEvent)) =>
+                {
+                    let code = self.expr(scope, expr)?;
+                    let text = coerce(file, expr.pos(), code, &Ty::Bool)?;
+                    let _ = write!(out, "ui.accept_key({text}); ");
+                }
                 Stmt::Assign(path, expr) => {
                     let (prop, want) = self.lvalue(scope, path)?;
+                    if let Some(item) = prop.strip_suffix(".common.focus") {
+                        let code = self.expr(scope, expr)?;
+                        let text = coerce(file, expr.pos(), code, &Ty::Bool)?;
+                        let item = item.strip_suffix(".base").unwrap_or(item);
+                        let _ = write!(
+                            out,
+                            "{{ let on = {text}; ui.set_focus(::tole::Element::id(&{item}), on); }} "
+                        );
+                        continue;
+                    }
                     let code = self.expr_want(scope, expr, Some(&want))?;
                     let text = coerce(file, expr.pos(), code, &want)?;
                     let _ = write!(
@@ -658,7 +792,13 @@ impl Program {
                     );
                 }
                 Stmt::Call(Expr::Call(path, args, pos)) => {
-                    if let Some((signal, params)) = self.emitted(scope, path) {
+                    if let Some(item) = self.focus_call(scope, path) {
+                        if !args.is_empty() {
+                            return Err(diag(file, *pos, "`forceActiveFocus` takes no arguments"));
+                        }
+                        let _ =
+                            write!(out, "ui.force_active_focus(::tole::Element::id(&{item})); ");
+                    } else if let Some((signal, params)) = self.emitted(scope, path) {
                         if params.len() != args.len() {
                             return Err(diag(
                                 file,
@@ -814,6 +954,27 @@ impl Program {
                     anchors.push((path.as_slice(), expr));
                     continue;
                 }
+                Member::Binding { path, expr }
+                    if path.first().is_some_and(|p| p.text == "KeyNavigation") =>
+                {
+                    out.push_str(&self.key_navigation(scope, var, path, expr)?);
+                    continue;
+                }
+                Member::Binding { path, expr } if matches!(path.as_slice(), [one] if one.text == "focus") =>
+                {
+                    let Expr::Bool(on, _) = expr else {
+                        return Err(diag(
+                            file,
+                            expr.pos(),
+                            "`focus` is given as `true` or `false`; a handler moves it (`other.focus = true`, `forceActiveFocus()`)",
+                        ));
+                    };
+                    let _ = writeln!(
+                        out,
+                        "        ui.set_focus(::tole::Element::id(&{var}), {on});"
+                    );
+                    continue;
+                }
                 Member::Binding { path, expr } => {
                     let names: Vec<&str> = path.iter().map(|p| p.text.as_str()).collect();
                     let pos = path.first().map_or(expr.pos(), |p| p.pos);
@@ -840,8 +1001,12 @@ impl Program {
                     let Some(ty) = ty else { continue };
                     ((format!(".{}", snake(&name.text)), ty), expr, name.pos)
                 }
-                Member::Handler { signal, body } => {
-                    out.push_str(&self.handler(scope, var, ty, signal, body)?);
+                Member::Handler {
+                    attached,
+                    signal,
+                    body,
+                } => {
+                    out.push_str(&self.handler(scope, var, ty, attached.as_ref(), signal, body)?);
                     continue;
                 }
                 _ => continue,
@@ -1296,6 +1461,14 @@ impl Program {
             reads: true,
         };
         for field in fields {
+            if let Some((rust, ty)) = code.ty.builtin_field(field) {
+                code = Code {
+                    text: format!("({}).{rust}", code.text),
+                    ty,
+                    reads: code.reads,
+                };
+                continue;
+            }
             let Ty::Struct(name) = &code.ty else {
                 return Err(diag(
                     file,

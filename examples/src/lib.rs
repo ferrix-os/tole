@@ -35,6 +35,14 @@ pub fn press(ui: &mut Ui, label: &str, click: bool) -> Option<()> {
     Some(())
 }
 
+/// Press and release the key xkb names `key` (`"Tab"`, `"space"`,
+/// `"Right"`), as a window hands it over.
+pub fn key(ui: &mut Ui, key: &str) {
+    let event = tole::KeyEvent::named(key);
+    let _ = ui.key_press(&event);
+    let _ = ui.key_release(&event);
+}
+
 /// The first `Text` item, anywhere, saying `label`.
 pub fn find_text(ui: &mut Ui, label: &str) -> Option<tole::ItemId> {
     let mut stack: Vec<tole::ItemId> = ui.roots().to_vec();
@@ -50,7 +58,7 @@ pub fn find_text(ui: &mut Ui, label: &str) -> Option<tole::ItemId> {
 }
 
 /// Every demo, in the README's order.
-pub const DEMOS: [Demo; 3] = [
+pub const DEMOS: [Demo; 4] = [
     Demo {
         name: "hello",
         about: "the smallest program",
@@ -70,6 +78,17 @@ pub const DEMOS: [Demo; 3] = [
                 press(ui, "+1", true)?;
             }
             press(ui, "Reset", false)?;
+            Some(root.common())
+        },
+    },
+    Demo {
+        name: "focus",
+        about: "focus and keys: Tab, Space, Right, Right, Space, Down",
+        make: |ui| {
+            let root = Focus::new(ui, None)?;
+            for name in ["Tab", "space", "Right", "Right", "space", "Down"] {
+                key(ui, name);
+            }
             Some(root.common())
         },
     },
@@ -185,6 +204,40 @@ mod tests {
         let narrow = ui.get(button.common().width);
         button.label.set(&mut ui, "A longer label".into());
         assert!(ui.get(button.common().width) > narrow + 40.0);
+    }
+
+    #[test]
+    fn tab_arrows_and_space_work_the_tiles() {
+        use super::{Focus, key};
+        let mut ui = tole::Ui::new(super::fonts());
+        let _focus = Focus::new(&mut ui, None).expect("made");
+        let label_of_focus = |ui: &mut tole::Ui| {
+            let item = ui.active_focus_item().expect("something has the focus");
+            let label = ui.children(item)[0];
+            let text = ui.text(label).expect("a tile's first child is its label");
+            ui.get(text.text).to_string()
+        };
+        key(&mut ui, "Tab");
+        assert_eq!(label_of_focus(&mut ui), "Wi-Fi");
+        key(&mut ui, "Tab");
+        key(&mut ui, "Tab");
+        key(&mut ui, "Tab");
+        assert_eq!(label_of_focus(&mut ui), "Dark", "tree order");
+        key(&mut ui, "Up");
+        assert_eq!(label_of_focus(&mut ui), "Wi-Fi", "KeyNavigation.up");
+        key(&mut ui, "ISO_Left_Tab");
+        assert_eq!(label_of_focus(&mut ui), "Quiet", "Shift+Tab wraps");
+        // A click gives the focus and toggles.
+        super::press(&mut ui, "Bluetooth", true).expect("clicked");
+        assert_eq!(label_of_focus(&mut ui), "Bluetooth");
+        let on = |ui: &mut tole::Ui| {
+            let item = ui.active_focus_item().expect("focus");
+            let rect = ui.rectangle(item).expect("a tile is a rectangle");
+            ui.get(rect.color) == tole::Color::hex(0x2a62c9)
+        };
+        assert!(on(&mut ui));
+        key(&mut ui, "space");
+        assert!(!on(&mut ui));
     }
 
     #[test]

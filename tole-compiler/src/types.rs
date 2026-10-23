@@ -28,6 +28,8 @@ pub(crate) enum Ty {
     Enum(String),
     /// A declared `struct`.
     Struct(String),
+    /// A key, as `Keys` handlers are given it.
+    KeyEvent,
 }
 
 impl Ty {
@@ -44,6 +46,7 @@ impl Ty {
             "string" => Ty::Str,
             "color" => Ty::Color,
             "font" => Ty::Font,
+            "KeyEvent" => Ty::KeyEvent,
             other if structs.contains_key(other) => Ty::Struct(other.to_owned()),
             other if enums.contains_key(other) => Ty::Enum(other.to_owned()),
             _ => return None,
@@ -62,6 +65,7 @@ impl Ty {
             Ty::Elide => "::tole::Elide".to_owned(),
             Ty::HAlign => "::tole::HAlign".to_owned(),
             Ty::VAlign => "::tole::VAlign".to_owned(),
+            Ty::KeyEvent => "::tole::KeyEvent".to_owned(),
             Ty::Enum(name) | Ty::Struct(name) => name.clone(),
         }
     }
@@ -78,7 +82,21 @@ impl Ty {
             Ty::Elide => "Text.elide".to_owned(),
             Ty::HAlign => "Text.horizontalAlignment".to_owned(),
             Ty::VAlign => "Text.verticalAlignment".to_owned(),
+            Ty::KeyEvent => "KeyEvent".to_owned(),
             Ty::Enum(name) | Ty::Struct(name) => name.clone(),
+        }
+    }
+
+    /// A field of a built-in struct: its Rust name and type.
+    pub(crate) fn builtin_field(&self, field: &str) -> Option<(&'static str, Ty)> {
+        match (self, field) {
+            (Ty::KeyEvent, "key") => Some(("key", Ty::Str)),
+            (Ty::KeyEvent, "text") => Some(("text", Ty::Str)),
+            (Ty::KeyEvent, "shift") => Some(("shift", Ty::Bool)),
+            (Ty::KeyEvent, "control") => Some(("control", Ty::Bool)),
+            (Ty::KeyEvent, "alt") => Some(("alt", Ty::Bool)),
+            (Ty::KeyEvent, "isAutoRepeat") => Some(("repeat", Ty::Bool)),
+            _ => None,
         }
     }
 
@@ -103,6 +121,8 @@ pub(crate) enum Kind {
     Column,
     /// `MouseArea`.
     MouseArea,
+    /// `FocusScope`.
+    FocusScope,
 }
 
 impl Kind {
@@ -115,6 +135,7 @@ impl Kind {
             "Row" => Kind::Row,
             "Column" => Kind::Column,
             "MouseArea" => Kind::MouseArea,
+            "FocusScope" => Kind::FocusScope,
             _ => return None,
         })
     }
@@ -128,6 +149,7 @@ impl Kind {
             Kind::Row => "::tole::handles::Row",
             Kind::Column => "::tole::handles::Column",
             Kind::MouseArea => "::tole::handles::MouseArea",
+            Kind::FocusScope => "::tole::handles::FocusScope",
         }
     }
 
@@ -145,6 +167,10 @@ impl Kind {
             ["visible"] => Some((".common.visible", Ty::Bool)),
             ["opacity"] => Some((".common.opacity", Ty::Real)),
             ["clip"] => Some((".common.clip", Ty::Bool)),
+            ["enabled"] => Some((".common.enabled", Ty::Bool)),
+            ["focus"] => Some((".common.focus", Ty::Bool)),
+            ["activeFocus"] => Some((".common.active_focus", Ty::Bool)),
+            ["activeFocusOnTab"] => Some((".common.active_focus_on_tab", Ty::Bool)),
             _ => None,
         };
         if common.is_some() {
@@ -165,7 +191,6 @@ impl Kind {
             (Kind::Text, ["verticalAlignment"]) => Some((".props.vertical_alignment", Ty::VAlign)),
             (Kind::Row | Kind::Column, ["spacing"]) => Some((".props.spacing", Ty::Real)),
             (Kind::Row | Kind::Column, ["padding"]) => Some((".props.padding", Ty::Real)),
-            (Kind::MouseArea, ["enabled"]) => Some((".props.enabled", Ty::Bool)),
             (Kind::MouseArea, ["hoverEnabled"]) => Some((".props.hover_enabled", Ty::Bool)),
             (Kind::MouseArea, ["pressed"]) => Some((".props.pressed", Ty::Bool)),
             (Kind::MouseArea, ["containsMouse"]) => Some((".props.contains_mouse", Ty::Bool)),
@@ -197,6 +222,30 @@ impl Kind {
     pub(crate) fn common_property(path: &[&str]) -> Option<(&'static str, Ty)> {
         Kind::Item.property(path)
     }
+}
+
+/// The keysym a `Keys.on<Key>Pressed` handler is for, as QML names the
+/// handlers.
+pub(crate) fn keys_handler_keysym(signal: &str) -> Option<&'static str> {
+    Some(match signal {
+        "returnPressed" => "Return",
+        "enterPressed" => "KP_Enter",
+        "escapePressed" => "Escape",
+        "spacePressed" => "space",
+        "tabPressed" => "Tab",
+        "backtabPressed" => "ISO_Left_Tab",
+        "upPressed" => "Up",
+        "downPressed" => "Down",
+        "leftPressed" => "Left",
+        "rightPressed" => "Right",
+        "deletePressed" => "Delete",
+        "backPressed" => "BackSpace",
+        "homePressed" => "Home",
+        "endPressed" => "End",
+        "pageUpPressed" => "Prior",
+        "pageDownPressed" => "Next",
+        _ => return None,
+    })
 }
 
 /// `Text.ElideRight` and the rest: the runtime's values for the names
