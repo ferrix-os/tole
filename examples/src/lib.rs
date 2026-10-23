@@ -455,16 +455,23 @@ pub fn find_kind(ui: &Ui, matches: impl Fn(&tole::Kind) -> bool) -> Option<tole:
 
 /// The fonts the demos draw with: `TOLE_FONTS` when set, else the Ferrix
 /// tree's Inter beside this checkout, so a screenshot does not depend on
-/// what the machine has installed.
+/// what the machine has installed; where there is no tree (a Ferrix image
+/// running a demo), the system's, `/usr/share/fonts`.
 #[must_use]
 pub fn fonts() -> Fonts {
-    let mut fonts = Fonts::new();
-    let dir = std::env::var_os("TOLE_FONTS").map_or_else(
-        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../../../../assets/fonts/inter"),
-        PathBuf::from,
-    );
-    let _ = fonts.add_dir(&dir);
-    fonts
+    if let Some(dir) = std::env::var_os("TOLE_FONTS") {
+        let mut fonts = Fonts::new();
+        let _ = fonts.add_dir(std::path::Path::new(&dir));
+        return fonts;
+    }
+    let tree =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../../../../assets/fonts/inter");
+    if tree.is_dir() {
+        let mut fonts = Fonts::new();
+        let _ = fonts.add_dir(&tree);
+        return fonts;
+    }
+    Fonts::system()
 }
 
 /// `demo` in a window on the Wayland desktop (`$WAYLAND_DISPLAY`), until
@@ -489,10 +496,19 @@ pub fn run_window(demo: &Demo) -> Result<(), String> {
     };
     let mut window =
         tole::window::Window::open(root, options).map_err(|error| error.to_string())?;
+    let mut up = false;
     while !window.is_closed() {
         let _ = window
             .dispatch(&mut ui, None)
             .map_err(|error| error.to_string())?;
+        // Said once, for a boot that waits for the window.
+        if !up && let Some((w, h)) = window.size() {
+            up = true;
+            use std::io::Write as _;
+            let mut out = std::io::stdout();
+            let _ = writeln!(out, "tole-examples: {} is up, {w}x{h}", demo.name);
+            let _ = out.flush();
+        }
     }
     Ok(())
 }

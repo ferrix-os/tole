@@ -912,6 +912,10 @@ socket, with no libwayland.
 cargo run -p tole-examples -- counter --window
 ```
 
+On Ferrix, `cargo xtask test-compositor --boot tole-demo` boots an image
+whose desktop starts the controls demo in a window, and checks the
+screen shows it.
+
 Only what changed is drawn again: a frame is kept between draws, each
 item's drawing is compared with the last frame's, and the damaged parts
 alone are drawn and handed to the compositor. A test holds the kept

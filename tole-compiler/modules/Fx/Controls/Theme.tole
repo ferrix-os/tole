@@ -30,6 +30,8 @@ singleton Theme {
     // The accent and the states.
     property color accent: dark ? "#7ea6f5" : "#2a62c9"
     property color accentBg: dark ? #7ea6f529 : #2a62c91a
+    // The accent where it stands on the ink, as a toast's button does.
+    property color accentInv: dark ? "#2a62c9" : "#7ea6f5"
     // The accent's tint over the window's ground, opaque.
     property color accentOver: dark ? "#2c3343" : "#e9eff9"
     property color onAccent: dark ? "#141518" : "#ffffff"
