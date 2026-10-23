@@ -53,8 +53,11 @@ component ComboBox : Rectangle {
         hoverEnabled: true
         onClicked: list.open()
     }
+    // It takes the keys while open, as Qt's does: Up and Down still reach
+    // the box around it, and Escape gives them back.
     Popup {
         id: list
+        focus: true
         y: combo.height + 4
         width: combo.width
         height: entries.implicitHeight + 8

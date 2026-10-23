@@ -382,7 +382,10 @@ heights live in a Fenwick tree, so finding the row at an offset and
 correcting a row measured differently both take `log n` steps. The
 model makes a row only when it is shown; this one computes them, and
 says its rows' heights so the view never guesses. The picture is
-scrolled to row 50,000 with `positionViewAtIndex`.
+scrolled to row 50,000 with `positionViewAtIndex`. `followEnd` keeps
+the last row at the view's foot as rows come, as `tail -f` does: it goes
+on when the view is scrolled to its end, by anything, or is set, and off
+only when something scrolls the view away from the end.
 
 ```qml
 // A ListView of 100,000 rows from a Rust model, two kinds of row chosen
@@ -637,6 +640,7 @@ component Controls : Rectangle {
                 TextField { width: 200; placeholderText: "Passphrase"; echoMode: TextInput.Password; text: "hunter22" }
                 TextField { width: 200; placeholderText: "Search the log" }
                 TextArea { width: 200; text: "Lines break at the width, between words." }
+                ComboBox { width: 200; model: ["Every boot", "This boot", "The last hour"] }
             }
             GroupBox {
                 title: "PROGRESS"
@@ -677,7 +681,11 @@ Ctrl+X and Ctrl+V. A letter is typed only with neither Control nor Alt
 held. In a window, copies and pastes go through the desktop's clipboard
 (`ext_data_control_v1`, which hyprix offers); without one, the `Ui`
 keeps its last copy itself. A password (`echoMode: TextInput.Password`)
-shows dots and is never copied.
+shows dots and is never copied. Ctrl+Z undoes an edit (letters typed in
+a row go back as one word) and Ctrl+Shift+Z or Ctrl+Y redoes it; the
+focused field's caret blinks from its last move and stays lit after ten
+seconds untouched, so an idle window stops drawing; and a `TextArea`
+scrolls to keep its caret's line in view as one types or moves.
 
 ### Popups, menus, a split and a file chooser
 
@@ -686,7 +694,10 @@ first while it is shown, placed from its parent but outside any cut
 around it. A press outside closes it (and does nothing else, so the
 press that closes a menu clicks nothing under it), as Escape does; a
 `Menu` also closes once an item is clicked. A `ComboBox` opens its list
-in one. A `SplitView` places its children as a `RowLayout` does, and
+in one. A modal popup, or one given `focus: true`, takes the keys when
+it opens; however a popup closes -- `close()`, Escape, a press outside,
+its `visible` set or the popup destroyed -- the keys go back to where
+they were, if they were still inside it. A `SplitView` places its children as a `RowLayout` does, and
 the handle between two drags the first one's `Layout.preferredWidth`.
 A `ScrollBar` is bound to what it scrolls and says `moved` when dragged.
 The picture is after a click on the combo box, the menu opened by the

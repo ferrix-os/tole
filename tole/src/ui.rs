@@ -159,6 +159,8 @@ pub struct Ui {
     pub(crate) clock: crate::anim::Clock,
     /// The clipboard: the last copy, and what a window has to take.
     pub(crate) clipboard: crate::textinput::Clipboard,
+    /// The text fields' histories and the caret's blink.
+    pub(crate) editing: crate::textinput::Editing,
     /// The items whose `checked` is exclusive among their siblings'.
     pub(crate) exclusives: Vec<(ItemId, Prop<bool>)>,
     /// The singletons, by type: each made the first time it is asked for.
@@ -211,6 +213,7 @@ impl Ui {
             updating: false,
             clock: crate::anim::Clock::default(),
             clipboard: crate::textinput::Clipboard::default(),
+            editing: crate::textinput::Editing::default(),
             exclusives: Vec::new(),
             globals: std::collections::HashMap::new(),
             pictures: crate::image::Pictures::default(),
@@ -273,6 +276,9 @@ impl Ui {
             }
         }
         self.updating = false;
+        if !self.focus.before_popup.is_empty() {
+            self.popups_hidden();
+        }
     }
 
     /// The scale frames are drawn at: buffer pixels to a logical one.
@@ -303,6 +309,9 @@ impl Ui {
 
     /// Whether anything changed since [`Ui::take_changed`] last asked.
     pub fn take_changed(&mut self) -> bool {
+        if self.caret_blinked() {
+            self.changed = true;
+        }
         core::mem::replace(&mut self.changed, false)
     }
 

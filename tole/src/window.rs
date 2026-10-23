@@ -450,6 +450,14 @@ impl Window {
         } else {
             timeout
         };
+        // And when the focused field's caret turns.
+        let timeout = match ui.next_blink() {
+            Some(ms) => {
+                let blink = Duration::from_millis(ms.ceil().max(1.0) as u64);
+                Some(timeout.map_or(blink, |t| t.min(blink)))
+            }
+            None => timeout,
+        };
         if self.options.clipboard {
             ui.set_clipboard_external(self.clipboard.is_some());
         }

@@ -45,6 +45,7 @@ component Controls : Rectangle {
                 TextField { width: 200; placeholderText: "Passphrase"; echoMode: TextInput.Password; text: "hunter22" }
                 TextField { width: 200; placeholderText: "Search the log" }
                 TextArea { width: 200; text: "Lines break at the width, between words." }
+                ComboBox { width: 200; model: ["Every boot", "This boot", "The last hour"] }
             }
             GroupBox {
                 title: "PROGRESS"

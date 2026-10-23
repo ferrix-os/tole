@@ -338,6 +338,7 @@ impl Kind {
             (Kind::ListView, ["count"]) => Some((".props.count", Ty::Int)),
             (Kind::ListView, ["currentIndex"]) => Some((".props.current_index", Ty::Int)),
             (Kind::ListView, ["cacheBuffer"]) => Some((".props.cache_buffer", Ty::Real)),
+            (Kind::ListView, ["followEnd"]) => Some((".props.follow_end", Ty::Bool)),
             (Kind::Repeater, ["model"]) => Some((".props.model", Ty::ModelSource)),
             (Kind::Repeater, ["count"]) => Some((".props.count", Ty::Int)),
             (Kind::MouseArea, ["hoverEnabled"]) => Some((".props.hover_enabled", Ty::Bool)),

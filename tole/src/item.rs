@@ -343,6 +343,11 @@ pub struct ListViewProps {
     pub current_index: Prop<i32>,
     /// How far past its edges delegates are kept made, in logical pixels.
     pub cache_buffer: Prop<f32>,
+    /// Whether it keeps its end in view as rows come, as `tail -f` does.
+    /// On when it is scrolled to its end (within a row), by whatever
+    /// scrolled it, or when set; off when scrolled away from the end,
+    /// never because rows came.
+    pub follow_end: Prop<bool>,
 }
 
 /// What an item is, with its own properties.
@@ -612,6 +617,7 @@ impl Ui {
                 count: self.prop(0_i32),
                 current_index: self.prop(-1_i32),
                 cache_buffer: self.prop(0.0_f32),
+                follow_end: self.prop(false),
             }),
             KindName::Repeater => Kind::Repeater(RepeaterProps {
                 model: self.prop(crate::model::ModelSource::default()),
@@ -1181,6 +1187,7 @@ fn props_of(data: &ItemData) -> Vec<crate::ui::PropId> {
                 p.count.id,
                 p.current_index.id,
                 p.cache_buffer.id,
+                p.follow_end.id,
             ]);
         }
         Kind::Popup(p) => ids.extend([p.close_policy.id, p.modal.id, p.dim_color.id]),

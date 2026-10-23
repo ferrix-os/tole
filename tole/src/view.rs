@@ -10,6 +10,16 @@
 //! (`DelegateChooser` makes several kinds) and is given the next row
 //! that needs one of that kind; a screenful of delegates serves a model
 //! of a million rows.
+//!
+//! `followEnd` keeps the end in view as rows come, as `tail -f` does. It
+//! goes on when the view is scrolled to its end, within its last row --
+//! by the wheel, a scroll bar or a program setting `contentY`, whatever
+//! moved it -- or when it is set, and off when something scrolls the
+//! view away from its end; rows coming never turn it off. While it is
+//! on, each update lays the new rows out first and then places the view
+//! at the end, so no frame shows the view past its rows or short of
+//! them. A view is never left scrolled past its end once its rows are
+//! placed.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -142,6 +152,9 @@ pub(crate) struct ViewState {
     pool: Vec<(usize, Delegate)>,
     /// How many delegates were ever made: for tests.
     made: usize,
+    /// The `contentY` the view last left itself at: a different one at
+    /// the next update was a scroll from outside.
+    left_at: Option<f32>,
 }
 
 impl Ui {
@@ -191,13 +204,18 @@ impl Ui {
         self.update();
     }
 
-    /// Scroll `view` to its end.
+    /// Scroll `view` to its end, as `positionViewAtEnd()`; it follows
+    /// its end from then on, until scrolled away.
     pub fn position_view_at_end(&mut self, view: ItemId) {
+        if let Some(props) = self.list_view(view) {
+            props.follow_end.set(self, true);
+        }
         self.position_view_at_index(view, usize::MAX);
     }
 }
 
-/// One update of a view.
+/// One update of a view: again while a following view's end moved as
+/// its rows were measured, so the rows made are the ones it ends at.
 fn update_view(
     ui: &mut Ui,
     view: ItemId,
@@ -205,14 +223,46 @@ fn update_view(
     chooser: Option<&Chooser>,
     state: &mut ViewState,
 ) {
+    for _ in 0..3 {
+        if !update_view_once(ui, view, factories, chooser, state) {
+            break;
+        }
+    }
+}
+
+/// [`update_view`] once: whether it scrolled to a moved end after making
+/// its rows.
+fn update_view_once(
+    ui: &mut Ui,
+    view: ItemId,
+    factories: &[DelegateFactory],
+    chooser: Option<&Chooser>,
+    state: &mut ViewState,
+) -> bool {
     let (Some(props), Some(own), Some(content)) =
         (ui.list_view(view), ui.common(view), ui.content_item(view))
     else {
-        return;
+        return false;
     };
     let source = ui.get(props.model);
     let spacing = ui.get(props.spacing);
     let rows_now = source.rows().row_count();
+    // Scrolled from outside since the last update: whether to the end,
+    // within the last row, against the rows as they were then.
+    let y = ui.get(props.flick.content_y);
+    // A view with no rows placed yet has no end to be at.
+    if let Some(left) = state.left_at
+        && (y - left).abs() > 0.01
+        && state.heights.total() > 0.0
+    {
+        let height = ui.get(own.height);
+        let total = ui.get(props.flick.content_height);
+        let last = state.heights.len().checked_sub(1).map_or(0.0, |row| {
+            state.heights.values.get(row).copied().unwrap_or(0.0) as f32
+        });
+        let most = (total - height).max(0.0);
+        props.follow_end.set(ui, y >= most - last.max(4.0));
+    }
     let changes = match &state.source {
         Some(before) if *before == source && state.spacing == spacing => {
             source.rows().changes_since(state.revision)
@@ -272,13 +322,27 @@ fn update_view(
     props
         .count
         .set(ui, i32::try_from(rows_now).unwrap_or(i32::MAX));
+    // Following, or scrolled past the end: placed by the rows as they are
+    // now, before any is made, so the rows made are the ones in view.
+    let placed = state.heights.prefix(rows_now) > 0.0;
+    if placed {
+        let total =
+            (state.heights.total() as f32 - if rows_now > 0 { spacing } else { 0.0 }).max(0.0);
+        let most = (total - ui.get(own.height)).max(0.0);
+        let y = ui.get(props.flick.content_y);
+        if ui.get(props.follow_end) || y > most {
+            props.flick.content_height.set(ui, total);
+            if (y - most).abs() > 0.01 {
+                props.flick.content_y.set(ui, most);
+            }
+        }
+    }
     // The rows in view, and as far past as the cache buffer.
     let cache = ui.get(props.cache_buffer).max(0.0);
     let top = f64::from(ui.get(props.flick.content_y) - cache).max(0.0);
     let bottom = f64::from(ui.get(props.flick.content_y) + ui.get(own.height) + cache);
     // Before any row is measured every height is 0: start at the top.
     // Heights the model gave place the rows already, scrolled anywhere.
-    let placed = state.heights.prefix(rows_now) > 0.0;
     let first = if rows_now == 0 || (state.estimate.is_none() && !placed) {
         0
     } else {
@@ -328,6 +392,17 @@ fn update_view(
     }
     let total = (state.heights.total() as f32 - if rows_now > 0 { spacing } else { 0.0 }).max(0.0);
     props.flick.content_height.set(ui, total);
+    // Rows measured otherwise than estimated move the end: a following
+    // view goes with it at the next update.
+    let most = (total - ui.get(own.height)).max(0.0);
+    let y = ui.get(props.flick.content_y);
+    let moved =
+        ui.get(props.follow_end) && (y - most).abs() > 0.01 && state.heights.prefix(rows_now) > 0.0;
+    if moved {
+        props.flick.content_y.set(ui, most);
+    }
+    state.left_at = Some(ui.get(props.flick.content_y));
+    moved
 }
 
 /// Take row `row`'s height from its delegate, if it has one and it

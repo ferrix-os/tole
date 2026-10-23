@@ -39,8 +39,9 @@ impl Ui {
         }
     }
 
-    /// Show the `Popup` `item`. A modal one takes the keys, as a dialog
-    /// does, and gives them back to where they were when it closes.
+    /// Show the `Popup` `item`. A modal one, or one given `focus`, takes
+    /// the keys, as a dialog does; whichever it is, the keys go back to
+    /// where they were when it closes, if they are inside it then.
     pub fn open_popup(&mut self, item: ItemId) {
         let Some(props) = self.popup(item) else {
             return;
@@ -50,10 +51,13 @@ impl Ui {
         };
         let was_shown = self.get(common.visible);
         common.visible.set(self, true);
-        if self.get(props.modal) && !was_shown {
-            let before = self.active_focus_item();
-            self.focus.before_popup.retain(|(p, _)| *p != item);
-            self.focus.before_popup.push((item, before));
+        if was_shown {
+            return;
+        }
+        let before = self.active_focus_item();
+        self.focus.before_popup.retain(|(p, _)| *p != item);
+        self.focus.before_popup.push((item, before));
+        if self.get(props.modal) || self.get(common.focus) {
             self.force_active_focus(item);
         }
     }
@@ -63,12 +67,31 @@ impl Ui {
         if let Some(common) = self.common(item).filter(|_| self.popup(item).is_some()) {
             common.visible.set(self, false);
         }
+        self.give_focus_back(item);
+    }
+
+    /// Popups hidden some other way than [`Ui::close_popup`] -- their
+    /// `visible` set, or destroyed -- give the keys back too: run as the
+    /// `Ui` updates.
+    pub(crate) fn popups_hidden(&mut self) {
+        let open: Vec<ItemId> = self.focus.before_popup.iter().map(|(p, _)| *p).collect();
+        let gone: Vec<ItemId> = open
+            .into_iter()
+            .filter(|p| !self.common(*p).is_some_and(|c| self.get(c.visible)))
+            .collect();
+        for popup in gone {
+            self.give_focus_back(popup);
+        }
+    }
+
+    /// `item` closed: the keys go back to where they were when it opened,
+    /// but only when they are still inside it -- a popup closed after
+    /// something else took them leaves them there.
+    fn give_focus_back(&mut self, item: ItemId) {
         let Some(at) = self.focus.before_popup.iter().position(|(p, _)| *p == item) else {
             return;
         };
         let (_, before) = self.focus.before_popup.remove(at);
-        // Only when the keys are still inside it: a popup closed after
-        // something else took them leaves them there.
         let mut inside = false;
         let mut walk = self.active_focus_item();
         while let Some(here) = walk {
@@ -78,12 +101,21 @@ impl Ui {
             }
             walk = self.parent(here);
         }
-        if inside {
+        // A popup destroyed with the keys in it leaves no chain to walk.
+        let lost = self.active_focus_item().is_none_or(|f| !self.exists(f));
+        if inside || (lost && !self.exists(item)) {
             match before {
                 Some(before) if self.exists(before) => self.force_active_focus(before),
-                _ => self.set_focus(item, false),
+                _ if self.exists(item) => self.set_focus(item, false),
+                _ => {}
             }
         }
+    }
+
+    /// The popups open now, in tree order, the topmost last.
+    #[must_use]
+    pub fn open_popups(&mut self) -> Vec<ItemId> {
+        self.popups_shown().into_iter().map(|(p, _)| p).collect()
     }
 
     /// The popups shown, in tree order (topmost last), each with where

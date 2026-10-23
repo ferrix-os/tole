@@ -615,10 +615,23 @@ pub fn run_window(demo: &Demo) -> Result<(), String> {
     let mut window =
         tole::window::Window::open(root, options).map_err(|error| error.to_string())?;
     let mut up = false;
+    let mut said = String::new();
     while !window.is_closed() {
         let _ = window
             .dispatch(&mut ui, None)
             .map_err(|error| error.to_string())?;
+        // Where the keys are and how many popups are open, each time it
+        // changes: a boot drives the window by keys and reads this back.
+        if up {
+            let now = keys_line(&mut ui);
+            if now != said {
+                use std::io::Write as _;
+                let mut out = std::io::stdout();
+                let _ = writeln!(out, "tole-examples: {now}");
+                let _ = out.flush();
+                said = now;
+            }
+        }
         // Said once, for a boot that waits for the window.
         if !up && let Some((w, h)) = window.size() {
             up = true;
@@ -629,6 +642,22 @@ pub fn run_window(demo: &Demo) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Where the keys are -- a text field and its text, a popup, or
+/// another item -- and how many popups are open.
+#[must_use]
+pub fn keys_line(ui: &mut Ui) -> String {
+    let keys = match ui.active_focus_item() {
+        None => "nowhere".to_owned(),
+        Some(item) => match (ui.text_input(item), ui.popup(item)) {
+            (Some(input), _) => format!("a text field holding \"{}\"", ui.get(input.text)),
+            (None, Some(_)) => "a popup".to_owned(),
+            (None, None) => "an item".to_owned(),
+        },
+    };
+    let open = ui.open_popups().len();
+    format!("keys on {keys}; {open} popups open")
 }
 
 /// `demo` drawn at `scale`, as a PNG file's bytes.

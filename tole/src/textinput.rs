@@ -15,6 +15,14 @@
 //! `Ui`'s clipboard: a window hands a copy to the desktop's and answers
 //! a paste from it ([`Ui::take_copied`], [`Ui::take_paste_request`],
 //! [`Ui::paste`]); without one, the `Ui` keeps the copy itself.
+//!
+//! Each keeps its own history: Ctrl+Z undoes an edit, Ctrl+Shift+Z or
+//! Ctrl+Y redoes it, letters typed in a row going back as one word. A
+//! text set from outside (a binding, the program) starts the history
+//! anew. The focused one's caret blinks, as Qt's does, from the last
+//! time it moved, and stays lit after ten seconds untouched, as GTK's
+//! does, so an idle window stops drawing. A `TextEdit` inside a
+//! `Flickable` scrolls it to keep the caret's line in view.
 
 use std::rc::Rc;
 
@@ -57,6 +65,47 @@ pub(crate) struct Clipboard {
     paste_into: Option<ItemId>,
     /// Whether a window answers pastes from the desktop's clipboard.
     external: bool,
+}
+
+/// How long the caret is lit, then dark, in milliseconds: Qt's
+/// `cursorFlashTime` of 1060 halved.
+pub(crate) const BLINK_HALF: f64 = 530.0;
+/// After this long without a move the caret stays lit and the window
+/// stops waking for it.
+pub(crate) const BLINK_FOR: f64 = 10_000.0;
+/// The edits kept to undo, per field.
+const HISTORY: usize = 100;
+
+/// One edit, to undo and redo.
+#[derive(Clone, Debug)]
+struct Edit {
+    /// The text before it, and its caret and anchor.
+    before: (Rc<str>, usize, usize),
+    /// The text after it, and its caret.
+    after: (Rc<str>, usize),
+    /// Letters typed at the caret, which the next such joins.
+    typing: bool,
+}
+
+/// A field's edits.
+#[derive(Clone, Debug, Default)]
+struct History {
+    undo: Vec<Edit>,
+    redo: Vec<Edit>,
+}
+
+/// The fields' histories and the caret's blink, as the `Ui` holds them.
+#[derive(Debug, Default)]
+pub(crate) struct Editing {
+    /// Each field's history, made at its first edit.
+    histories: std::collections::HashMap<ItemId, History>,
+    /// The field whose caret was last drawn, where the caret and the
+    /// selection's other end were, and the text's length.
+    blink_key: Option<(ItemId, usize, usize, usize)>,
+    /// When the caret last moved: the blink counts from there.
+    blink_since: f64,
+    /// The half of the blink last drawn.
+    blink_phase: u64,
 }
 
 /// One line as drawn: the part of the text it shows and its shaped run.
@@ -243,6 +292,7 @@ impl Ui {
         };
         if !text.is_empty() {
             self.insert_typed(item, text);
+            self.follow_caret(item);
         }
     }
 
@@ -272,9 +322,11 @@ impl Ui {
             .set(self, i32::try_from(cursor).unwrap_or(i32::MAX));
     }
 
-    /// Replace `from..to` with `with`, the caret after it.
+    /// Replace `from..to` with `with`, the caret after it, kept in the
+    /// field's history.
     fn replace(&mut self, item: ItemId, p: TextInputProps, (from, to): (usize, usize), with: &str) {
         let text = self.get(p.text);
+        let (cursor, anchor) = self.caret(p);
         let (from, to) = (from.min(to), from.max(to));
         let (Some(head), Some(tail)) = (text.get(..from), text.get(to..)) else {
             return;
@@ -284,12 +336,177 @@ impl Ui {
         } else {
             with.replace(['\r', '\n'], " ")
         };
-        let next = format!("{head}{with}{tail}");
-        p.text.set(self, Rc::from(next));
+        let next: Rc<str> = Rc::from(format!("{head}{with}{tail}"));
+        p.text.set(self, Rc::clone(&next));
         let at = from + with.len();
         self.set_caret(p, at, at);
-        let _ = item;
+        self.remember(item, (text, cursor, anchor), (next, at), (from, to), &with);
         self.emit(p.text_edited, Vec::new());
+    }
+
+    /// Keep an edit in `item`'s history: joined to the last when both
+    /// are letters typed at the caret and no word ended between them.
+    fn remember(
+        &mut self,
+        item: ItemId,
+        before: (Rc<str>, usize, usize),
+        after: (Rc<str>, usize),
+        (from, to): (usize, usize),
+        with: &str,
+    ) {
+        let typing = from == to && !with.is_empty() && !with.contains('\n');
+        let live: Vec<ItemId> = self.editing.histories.keys().copied().collect();
+        for old in live {
+            if !self.exists(old) {
+                let _ = self.editing.histories.remove(&old);
+            }
+        }
+        let history = self.editing.histories.entry(item).or_default();
+        history.redo.clear();
+        if typing
+            && let Some(last) = history.undo.last_mut()
+            && last.typing
+            && *last.after.0 == *before.0
+            && last.after.1 == from
+            // A space after a word ends it: the next letter starts anew.
+            && !(with.starts_with(' ') && !last.after.0.get(..from).is_some_and(|head| head.ends_with(' ')))
+        {
+            last.after = after;
+            return;
+        }
+        history.undo.push(Edit {
+            before,
+            after,
+            typing,
+        });
+        if history.undo.len() > HISTORY {
+            let _ = history.undo.remove(0);
+        }
+    }
+
+    /// Undo `item`'s last edit (`redo` false) or redo its last undone one:
+    /// whether there was one. A text changed since from outside the field
+    /// drops the history instead.
+    pub fn undo_text(&mut self, item: ItemId, redo: bool) -> bool {
+        let Some(p) = self.text_input(item) else {
+            return false;
+        };
+        if self.get(p.read_only) {
+            return false;
+        }
+        let text = self.get(p.text);
+        let Some(history) = self.editing.histories.get_mut(&item) else {
+            return false;
+        };
+        let edit = if redo {
+            history.redo.pop()
+        } else {
+            history.undo.pop()
+        };
+        let Some(edit) = edit else {
+            return false;
+        };
+        // What the text has to be for the edit to apply.
+        let expected = if redo { &edit.before.0 } else { &edit.after.0 };
+        if **expected != *text {
+            let _ = self.editing.histories.remove(&item);
+            return false;
+        }
+        if redo {
+            p.text.set(self, Rc::clone(&edit.after.0));
+            self.set_caret(p, edit.after.1, edit.after.1);
+        } else {
+            p.text.set(self, Rc::clone(&edit.before.0));
+            self.set_caret(p, edit.before.1, edit.before.2);
+        }
+        if let Some(history) = self.editing.histories.get_mut(&item) {
+            if redo {
+                history.undo.push(edit);
+            } else {
+                history.redo.push(edit);
+            }
+        }
+        self.emit(p.text_edited, Vec::new());
+        true
+    }
+
+    /// Whether the focused field's caret is lit at the clock's time.
+    fn caret_lit(&self) -> bool {
+        let since = self.clock_now() - self.editing.blink_since;
+        since >= BLINK_FOR || ((since / BLINK_HALF).floor() as u64).is_multiple_of(2)
+    }
+
+    /// The clock moved: whether the caret's blink turned since it was
+    /// last drawn, and so wants a frame.
+    pub(crate) fn caret_blinked(&mut self) -> bool {
+        let Some((item, ..)) = self.editing.blink_key else {
+            return false;
+        };
+        if self.active_focus_item() != Some(item) {
+            return false;
+        }
+        let since = self.clock_now() - self.editing.blink_since;
+        let phase = if since >= BLINK_FOR {
+            u64::MAX
+        } else {
+            (since / BLINK_HALF).floor() as u64
+        };
+        let turned = phase != self.editing.blink_phase;
+        self.editing.blink_phase = phase;
+        turned
+    }
+
+    /// How long until the focused field's caret turns, in milliseconds,
+    /// if it blinks: a window wakes then to draw it.
+    #[must_use]
+    pub fn next_blink(&self) -> Option<f64> {
+        let (item, ..) = self.editing.blink_key?;
+        if self.active_focus_item() != Some(item) {
+            return None;
+        }
+        let since = self.clock_now() - self.editing.blink_since;
+        if since >= BLINK_FOR {
+            return None;
+        }
+        Some(BLINK_HALF - since % BLINK_HALF)
+    }
+
+    /// Scroll the `Flickable` a `TextEdit` is in, if it is in one, so the
+    /// line its caret is on is in view.
+    fn follow_caret(&mut self, item: ItemId) {
+        let Some(p) = self.text_input(item).filter(|p| p.multiline) else {
+            return;
+        };
+        let laid = self.laid_out(item, p);
+        let (cursor, _) = self.caret(p);
+        let line = laid.lines.get(laid.line_of(cursor)).map_or(0.0, |l| l.top);
+        // Down through the items to the content of a Flickable.
+        let mut y = 0.0;
+        let mut at = item;
+        while let Some(parent) = self.parent(at) {
+            y += self.common(at).map_or(0.0, |c| self.get(c.y));
+            if let Some(flick) = self.parent(parent)
+                && let Some(props) = self.flickable(flick)
+                && self.content_item(flick) == Some(parent)
+            {
+                let height = self.common(flick).map_or(0.0, |c| self.get(c.height));
+                let now = self.get(props.content_y);
+                let (top, bottom) = (y + line, y + line + laid.line_height);
+                let mut next = now;
+                if bottom > next + height {
+                    next = bottom - height;
+                }
+                if top < next {
+                    next = top;
+                }
+                let next = next.max(0.0);
+                if (next - now).abs() > f32::EPSILON {
+                    props.content_y.set(self, next);
+                }
+                return;
+            }
+            at = parent;
+        }
     }
 
     /// Type `text` at the caret, over the selection.
@@ -331,6 +548,15 @@ impl Ui {
     /// A key for the focused `TextInput` or `TextEdit` `item`: whether it
     /// took it.
     pub(crate) fn text_key(&mut self, item: ItemId, event: &KeyEvent) -> bool {
+        let took = self.text_key_inner(item, event);
+        if took {
+            self.follow_caret(item);
+        }
+        took
+    }
+
+    /// [`Ui::text_key`], before the view follows the caret.
+    fn text_key_inner(&mut self, item: ItemId, event: &KeyEvent) -> bool {
         let Some(p) = self.text_input(item) else {
             return false;
         };
@@ -364,6 +590,14 @@ impl Ui {
                     if !read_only {
                         self.ask_paste(item);
                     }
+                    return true;
+                }
+                "z" | "Z" => {
+                    let _ = self.undo_text(item, event.shift);
+                    return true;
+                }
+                "y" | "Y" => {
+                    let _ = self.undo_text(item, true);
                     return true;
                 }
                 "Left" => return moved(self, word_left(&text, cursor)),
@@ -786,6 +1020,16 @@ impl Ui {
             }
         }
         if focused && !self.get(p.read_only) {
+            // The blink starts again whenever the caret moves or the text
+            // changes.
+            let key = Some((item, cursor, anchor, text.len()));
+            if self.editing.blink_key != key {
+                self.editing.blink_key = key;
+                self.editing.blink_since = self.clock_now();
+                self.editing.blink_phase = 0;
+            }
+        }
+        if focused && !self.get(p.read_only) && self.caret_lit() {
             let line = laid.lines.get(laid.line_of(cursor));
             let y = top + line.map_or(0.0, |l| l.top);
             let x = ((left + caret_x) * scale).round() / scale;

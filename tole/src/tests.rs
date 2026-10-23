@@ -1884,3 +1884,280 @@ fn a_painter_draws_a_picture_scaled_into_its_place() {
     let [r, _, b, _] = pixel(&frame, 37, 10);
     assert!(b > 200 && r < 60, "blue at the right: {r} {b}");
 }
+
+#[test]
+fn ctrl_z_undoes_a_word_at_a_time_and_ctrl_y_redoes() {
+    let mut ui = ui();
+    let input = text_field(&mut ui);
+    type_text(&mut ui, "hello world");
+    // Letters typed in a row go back as one word.
+    assert!(ui.key_press(&key_with("z", true, false)));
+    assert_eq!(&*ui.get(input.props.text), "hello");
+    assert_eq!(ui.get(input.props.cursor_position), 5);
+    assert!(ui.key_press(&key_with("z", true, false)));
+    assert_eq!(&*ui.get(input.props.text), "");
+    // Ctrl+Shift+Z and Ctrl+Y redo.
+    assert!(ui.key_press(&key_with("Z", true, true)));
+    assert_eq!(&*ui.get(input.props.text), "hello");
+    assert!(ui.key_press(&key_with("y", true, false)));
+    assert_eq!(&*ui.get(input.props.text), "hello world");
+    // A deletion is a step of its own, its selection given back.
+    assert!(ui.key_press(&key_with("a", true, false)));
+    assert!(ui.key_press(&crate::KeyEvent::named("BackSpace")));
+    assert_eq!(&*ui.get(input.props.text), "");
+    assert!(ui.key_press(&key_with("z", true, false)));
+    assert_eq!(&*ui.get(input.props.text), "hello world");
+    assert_eq!(&*ui.get(input.props.selected_text), "hello world");
+    // A new edit drops what could be redone.
+    type_text(&mut ui, "x");
+    assert!(ui.key_press(&key_with("y", true, false)));
+    assert_eq!(&*ui.get(input.props.text), "x");
+    // Undo says the text was edited, as typing does.
+    let _ = ui.take_signals();
+    assert!(ui.key_press(&key_with("z", true, false)));
+    assert!(
+        ui.take_signals()
+            .iter()
+            .any(|e| e.signal == input.props.text_edited)
+    );
+    // A text set from outside starts the history anew.
+    input.props.text.set(&mut ui, Rc::from("from the program"));
+    assert!(ui.key_press(&key_with("z", true, false)));
+    assert_eq!(&*ui.get(input.props.text), "from the program");
+}
+
+/// Whether `scene` has a caret: a fill one logical pixel wide.
+fn has_caret(scene: &[DrawOp]) -> bool {
+    scene
+        .iter()
+        .any(|op| matches!(op, DrawOp::Fill { rect, .. } if (rect.w - 1.0).abs() < 0.01))
+}
+
+#[test]
+fn the_caret_blinks_from_its_last_move_and_then_stays_lit() {
+    let mut ui = ui();
+    let _input = text_field(&mut ui);
+    type_text(&mut ui, "abc");
+    ui.tick(1000.0);
+    assert!(has_caret(&ui.scene()), "lit when it moved");
+    let _ = ui.take_changed();
+    // Dark for the second half-period: a frame is wanted, and the window
+    // is told when to wake.
+    ui.tick(1000.0 + 600.0);
+    assert!(ui.take_changed(), "the blink wants a frame");
+    assert!(!has_caret(&ui.scene()));
+    let wake = ui.next_blink().unwrap();
+    assert!(wake > 0.0 && wake <= 530.0, "{wake}");
+    // A key lights it again at once.
+    assert!(ui.key_press(&crate::KeyEvent::named("Left")));
+    assert!(has_caret(&ui.scene()));
+    // Ten seconds untouched: lit, and nothing more to wake for.
+    ui.tick(1600.0 + 10_500.0);
+    assert!(has_caret(&ui.scene()));
+    let _ = ui.take_changed();
+    assert_eq!(ui.next_blink(), None);
+    ui.tick(1600.0 + 11_100.0);
+    assert!(!ui.take_changed(), "a still caret draws nothing");
+}
+
+#[test]
+fn a_text_edit_in_a_flickable_keeps_its_caret_in_view() {
+    let mut ui = ui();
+    let root = crate::handles::Item::new(&mut ui, None).unwrap();
+    root.common.width.set(&mut ui, 200.0);
+    root.common.height.set(&mut ui, 60.0);
+    let flick = crate::handles::Flickable::new(&mut ui, Some(root.id)).unwrap();
+    flick.common.width.set(&mut ui, 200.0);
+    flick.common.height.set(&mut ui, 60.0);
+    flick.common.clip.set(&mut ui, true);
+    let edit = crate::handles::TextEdit::new(&mut ui, Some(flick.id)).unwrap();
+    edit.props.font.set(&mut ui, inter(14.0));
+    edit.common.width.set(&mut ui, 200.0);
+    ui.force_active_focus(edit.id);
+    for line in 0..8 {
+        type_text(&mut ui, &format!("line{line}"));
+        assert!(ui.key_press(&crate::KeyEvent::named("Return")));
+    }
+    // Typing at the foot scrolled the view down to the caret's line.
+    let line = ui.get(edit.common.implicit_height) / 9.0;
+    let scrolled = ui.get(flick.props.content_y);
+    assert!(
+        (scrolled - (9.0 * line - 60.0)).abs() < 0.5,
+        "{scrolled} for lines of {line}"
+    );
+    // Ctrl+Home goes back to the top, and the view with it.
+    assert!(ui.key_press(&key_with("Home", true, false)));
+    assert!(ui.get(flick.props.content_y).abs() < 0.01);
+}
+
+#[test]
+fn a_popup_gives_the_keys_back_however_it_closes() {
+    let mut ui = ui();
+    let input = text_field(&mut ui);
+    let root = ui.parent(input.id).unwrap();
+    let popup = crate::handles::Popup::new(&mut ui, Some(root)).unwrap();
+    popup.common.width.set(&mut ui, 100.0);
+    popup.common.height.set(&mut ui, 30.0);
+    let inner = crate::handles::TextInput::new(&mut ui, Some(popup.id)).unwrap();
+    inner.common.width.set(&mut ui, 100.0);
+    inner.common.height.set(&mut ui, 30.0);
+    // One given `focus` takes the keys when it opens, though not modal.
+    popup.common.visible.set(&mut ui, false);
+    popup.common.focus.set(&mut ui, true);
+    ui.open_popup(popup.id);
+    assert!(!ui.get(input.common.active_focus));
+    ui.force_active_focus(inner.id);
+    // Hidden by its `visible`, not `close()`: the field has them again.
+    popup.common.visible.set(&mut ui, false);
+    ui.update();
+    assert!(ui.get(input.common.active_focus));
+    // Escape closes it the same way.
+    ui.open_popup(popup.id);
+    ui.force_active_focus(inner.id);
+    assert!(ui.key_press(&crate::KeyEvent::named("Escape")));
+    assert!(!ui.get(popup.common.visible));
+    assert!(ui.get(input.common.active_focus));
+    // A popup that never had the keys leaves them where they are.
+    popup.common.focus.set(&mut ui, false);
+    ui.open_popup(popup.id);
+    assert!(ui.get(input.common.active_focus));
+    ui.close_popup(popup.id);
+    assert!(ui.get(input.common.active_focus));
+}
+
+/// A log's lines as the lode viewer's table has them: every row 28 high
+/// as the model says, and every arrival a reset, the lines made anew.
+struct Tail {
+    rows: Cell<usize>,
+    tracker: crate::ModelTracker,
+}
+
+impl crate::Model for Tail {
+    type Row = i32;
+    fn row_count(&self) -> usize {
+        self.rows.get()
+    }
+    fn row(&self, index: usize) -> Option<i32> {
+        (index < self.rows.get()).then(|| i32::try_from(index).unwrap_or(-1))
+    }
+    fn row_height(&self, _index: usize) -> Option<f32> {
+        Some(28.0)
+    }
+    fn tracker(&self) -> &crate::ModelTracker {
+        &self.tracker
+    }
+}
+
+/// The last row's value and where its foot is in the view, if it is
+/// shown.
+fn last_row_foot(ui: &mut Ui, view: &crate::handles::ListView) -> Option<(i32, f32)> {
+    let y = ui.get(view.props.flick.content_y);
+    shown_rows(ui, view.id)
+        .last()
+        .map(|&(row, top)| (row, top + 28.0 - y))
+}
+
+#[test]
+fn a_following_list_view_keeps_its_last_row_at_its_foot_as_rows_come() {
+    let mut ui = bare();
+    let view = crate::handles::ListView::new(&mut ui, None).unwrap();
+    view.common.width.set(&mut ui, 200.0);
+    view.common.height.set(&mut ui, 300.0);
+    ui.set_view_delegates(view.id, vec![row_factory(28.0)], None);
+    let tail = Rc::new(Tail {
+        rows: Cell::new(40),
+        tracker: crate::ModelTracker::default(),
+    });
+    let model = crate::ModelRc::from_rc(Rc::clone(&tail) as Rc<dyn crate::Model<Row = i32>>);
+    view.props
+        .model
+        .set(&mut ui, crate::ModelSource::model(model));
+    ui.update();
+    assert!(!ui.get(view.props.follow_end));
+    let arrive = |ui: &mut Ui, count: usize| {
+        tail.rows.set(tail.rows.get() + count);
+        tail.tracker.reset();
+        ui.update();
+    };
+    // Scrolled by the wheel to a pixel short of the end: following.
+    ui.pointer_move(50.0, 50.0);
+    for _ in 0..200 {
+        ui.pointer_wheel(1.0);
+    }
+    ui.update();
+    let most = 40.0 * 28.0 - 300.0;
+    view.props.flick.content_y.set(&mut ui, most - 1.0);
+    ui.update();
+    assert!(ui.get(view.props.follow_end), "a pixel short is the end");
+    // A record comes: the last row at the foot, not past it (the view
+    // showing nothing) and not left behind.
+    arrive(&mut ui, 1);
+    assert_eq!(last_row_foot(&mut ui, &view), Some((40, 300.0)));
+    // A hundred a second for three seconds, a frame each 16 ms.
+    for step in 0..300 {
+        arrive(&mut ui, 1 + step % 2);
+        let (row, foot) = last_row_foot(&mut ui, &view).unwrap();
+        assert_eq!(row as usize, tail.rows.get() - 1);
+        assert!((foot - 300.0).abs() < 0.01, "the last row's foot at {foot}");
+    }
+    assert!(ui.get(view.props.follow_end));
+    // Scrolled up by the wheel: no longer following; rows coming leave
+    // the view where it is.
+    ui.pointer_wheel(-10.0);
+    ui.update();
+    assert!(!ui.get(view.props.follow_end));
+    let y = ui.get(view.props.flick.content_y);
+    arrive(&mut ui, 5);
+    assert_eq!(ui.get(view.props.flick.content_y), y);
+    // Back to the end by the wheel: following again.
+    for _ in 0..100 {
+        ui.pointer_wheel(1.0);
+    }
+    ui.update();
+    assert!(ui.get(view.props.follow_end));
+    arrive(&mut ui, 3);
+    let (row, foot) = last_row_foot(&mut ui, &view).unwrap();
+    assert_eq!(row as usize, tail.rows.get() - 1);
+    assert!((foot - 300.0).abs() < 0.01);
+    // Rows going: a view past its new end is brought back to it.
+    view.props.follow_end.set(&mut ui, false);
+    ui.update();
+    tail.rows.set(20);
+    tail.tracker.reset();
+    ui.update();
+    assert_eq!(last_row_foot(&mut ui, &view), Some((19, 300.0)));
+    // Set by the program: to the end at once.
+    view.props.flick.content_y.set(&mut ui, 0.0);
+    ui.update();
+    assert!(!ui.get(view.props.follow_end));
+    view.props.follow_end.set(&mut ui, true);
+    arrive(&mut ui, 2);
+    assert_eq!(last_row_foot(&mut ui, &view), Some((21, 300.0)));
+}
+
+#[test]
+fn a_following_list_view_grows_with_a_vec_model_pushed_to() {
+    let mut ui = bare();
+    let view = crate::handles::ListView::new(&mut ui, None).unwrap();
+    view.common.width.set(&mut ui, 200.0);
+    view.common.height.set(&mut ui, 100.0);
+    ui.set_view_delegates(view.id, vec![row_factory(20.0)], None);
+    let rows = Rc::new(crate::VecModel::new((0..10).collect::<Vec<i32>>()));
+    let model = crate::ModelRc::from_rc(Rc::clone(&rows) as Rc<dyn crate::Model<Row = i32>>);
+    view.props
+        .model
+        .set(&mut ui, crate::ModelSource::model(model));
+    ui.update();
+    ui.position_view_at_end(view.id);
+    for value in 10..200 {
+        rows.push(value);
+        ui.update();
+        let y = ui.get(view.props.flick.content_y);
+        let (last, top) = *shown_rows(&mut ui, view.id).last().unwrap();
+        assert_eq!(last, value);
+        assert!(
+            (top + 20.0 - y - 100.0).abs() < 0.01,
+            "row {value} at {top}, view at {y}"
+        );
+    }
+}
