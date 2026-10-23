@@ -604,7 +604,15 @@ fn a_press_holds_the_pointer_and_a_release_elsewhere_is_no_click() {
     );
     ui.pointer_release();
     let got = emitted(&mut ui);
-    assert_eq!(got, [a.props.on_pressed, a.props.released]);
+    assert_eq!(
+        got,
+        [
+            a.props.on_pressed,
+            a.props.position_changed,
+            a.props.released
+        ],
+        "a move while held says so"
+    );
     assert!(!got.contains(&other.props.clicked));
 }
 
@@ -1470,4 +1478,203 @@ fn a_sequence_loops_with_pauses() {
     assert_eq!(at(&mut ui, 400.0), 0.5, "stopped where it was");
     assert_eq!(crate::Easing::OutCubic.apply(1.0), 1.0);
     assert!((crate::Easing::OutBack.apply(0.7) - 1.0).abs() < 0.2);
+}
+
+/// A key as a window hands it over, with Control or Shift held.
+fn key_with(key: &str, control: bool, shift: bool) -> crate::KeyEvent {
+    let mut event = crate::KeyEvent::named(key);
+    event.control = control;
+    event.shift = shift;
+    if control {
+        // What xkb gives for Ctrl+V and the rest: a control character.
+        event.text = Rc::from(
+            key.chars()
+                .next()
+                .filter(char::is_ascii_alphabetic)
+                .map(|c| ((c.to_ascii_lowercase() as u8 - b'a' + 1) as char).to_string())
+                .unwrap_or_default(),
+        );
+    }
+    event
+}
+
+/// Type `text` a key at a time.
+fn type_text(ui: &mut Ui, text: &str) {
+    for c in text.chars() {
+        let _ = ui.key_press(&crate::KeyEvent::named(&c.to_string()));
+    }
+}
+
+/// A focused `TextInput` of Inter 14 in a 300 × 40 root.
+fn text_field(ui: &mut Ui) -> crate::handles::TextInput {
+    let root = crate::handles::Rectangle::new(ui, None).unwrap();
+    root.common.width.set(ui, 300.0);
+    root.common.height.set(ui, 40.0);
+    let input = crate::handles::TextInput::new(ui, Some(root.id)).unwrap();
+    input.common.x.set(ui, 10.0);
+    input.common.width.set(ui, 200.0);
+    input.common.height.set(ui, 30.0);
+    input.props.font.set(ui, inter(14.0));
+    ui.force_active_focus(input.id);
+    input
+}
+
+#[test]
+fn a_text_input_types_moves_selects_and_deletes() {
+    let mut ui = ui();
+    let input = text_field(&mut ui);
+    type_text(&mut ui, "hello world");
+    assert_eq!(&*ui.get(input.props.text), "hello world");
+    assert_eq!(ui.get(input.props.cursor_position), 11);
+    // Ctrl+Left goes a word back; Shift+End selects to the end.
+    assert!(ui.key_press(&key_with("Left", true, false)));
+    assert_eq!(ui.get(input.props.cursor_position), 6);
+    assert!(ui.key_press(&key_with("End", false, true)));
+    assert_eq!(&*ui.get(input.props.selected_text), "world");
+    // Typing replaces the selection; BackSpace takes a character, and
+    // Ctrl+BackSpace a word.
+    type_text(&mut ui, "tole");
+    assert_eq!(&*ui.get(input.props.text), "hello tole");
+    assert!(ui.key_press(&crate::KeyEvent::named("BackSpace")));
+    assert_eq!(&*ui.get(input.props.text), "hello tol");
+    assert!(ui.key_press(&key_with("BackSpace", true, false)));
+    assert_eq!(&*ui.get(input.props.text), "hello ");
+    // Home, then Delete.
+    assert!(ui.key_press(&crate::KeyEvent::named("Home")));
+    assert!(ui.key_press(&crate::KeyEvent::named("Delete")));
+    assert_eq!(&*ui.get(input.props.text), "ello ");
+    // Return says `accepted` and types nothing; Tab is not taken.
+    let _ = ui.take_signals();
+    assert!(ui.key_press(&crate::KeyEvent::named("Return")));
+    assert_eq!(&*ui.get(input.props.text), "ello ");
+    assert!(
+        ui.take_signals()
+            .iter()
+            .any(|e| e.signal == input.props.accepted)
+    );
+    assert!(!ui.key_press(&crate::KeyEvent::named("Tab")));
+    // Characters wider than a byte stay whole.
+    assert!(ui.key_press(&crate::KeyEvent::named("End")));
+    type_text(&mut ui, "äö");
+    assert!(ui.key_press(&crate::KeyEvent::named("BackSpace")));
+    assert_eq!(&*ui.get(input.props.text), "ello ä");
+}
+
+#[test]
+fn control_never_types_and_the_clipboard_copies_cuts_and_pastes() {
+    let mut ui = ui();
+    let input = text_field(&mut ui);
+    type_text(&mut ui, "key.pem");
+    // Ctrl+V with nothing copied types no `v` (the viewer's bug).
+    assert!(ui.key_press(&key_with("v", true, false)));
+    assert_eq!(&*ui.get(input.props.text), "key.pem");
+    // Alt+letters type nothing either.
+    let mut alt = crate::KeyEvent::named("x");
+    alt.alt = true;
+    assert!(!ui.key_press(&alt));
+    assert_eq!(&*ui.get(input.props.text), "key.pem");
+    // Ctrl+A, Ctrl+C: kept, and handed to a window.
+    assert!(ui.key_press(&key_with("a", true, false)));
+    assert!(ui.key_press(&key_with("c", true, false)));
+    assert_eq!(ui.take_copied().as_deref(), Some("key.pem"));
+    assert_eq!(ui.take_copied(), None);
+    // Ctrl+X empties it; Ctrl+V twice puts it back twice.
+    assert!(ui.key_press(&key_with("x", true, false)));
+    assert_eq!(&*ui.get(input.props.text), "");
+    assert!(ui.key_press(&key_with("v", true, false)));
+    assert!(ui.key_press(&key_with("V", true, false)));
+    assert_eq!(&*ui.get(input.props.text), "key.pemkey.pem");
+    // With a window's clipboard, a paste waits for the window.
+    ui.set_clipboard_external(true);
+    assert!(ui.key_press(&key_with("a", true, false)));
+    assert!(ui.key_press(&key_with("v", true, false)));
+    assert_eq!(&*ui.get(input.props.text), "key.pemkey.pem");
+    assert!(ui.take_paste_request());
+    ui.paste("~/.ssh/id_ed25519\n");
+    assert_eq!(&*ui.get(input.props.text), "~/.ssh/id_ed25519 ", "one line");
+    assert!(!ui.take_paste_request());
+    // A password is not copied.
+    let _ = ui.take_copied();
+    input.props.echo_mode.set(&mut ui, crate::echo::PASSWORD);
+    assert!(ui.key_press(&key_with("a", true, false)));
+    assert!(ui.key_press(&key_with("c", true, false)));
+    assert_eq!(ui.take_copied(), None);
+}
+
+#[test]
+fn the_pointer_places_the_caret_drags_a_selection_and_double_clicks_a_word() {
+    let mut ui = ui();
+    let input = text_field(&mut ui);
+    input.props.text.set(&mut ui, Rc::from("alpha beta gamma"));
+    ui.set_focus(input.id, false);
+    let rect = ui.rect_of(input.id).unwrap();
+    let mid = rect.y + rect.h / 2.0;
+    // Pressed far left: the caret at the start, and the focus taken.
+    ui.pointer_move(rect.x + 1.0, mid);
+    ui.pointer_press();
+    ui.pointer_release();
+    assert!(ui.get(input.common.active_focus));
+    assert_eq!(ui.get(input.props.cursor_position), 0);
+    // Dragged across to the end: all selected.
+    ui.tick(1000.0);
+    ui.pointer_press();
+    ui.pointer_move(rect.x + 199.0, mid);
+    ui.pointer_release();
+    assert_eq!(&*ui.get(input.props.selected_text), "alpha beta gamma");
+    // A double click on "beta" takes the word.
+    ui.tick(2000.0);
+    let beta = rect.x + ui.text_width(&inter(14.0), "alpha be");
+    ui.pointer_move(beta, mid);
+    ui.pointer_press();
+    ui.pointer_release();
+    ui.pointer_press();
+    ui.pointer_release();
+    assert_eq!(&*ui.get(input.props.selected_text), "beta");
+    // The I-beam over it.
+    assert_eq!(ui.take_cursor(), Some(crate::Cursor::Text));
+    // It draws its caret and selection only while focused.
+    let focused = ui.scene();
+    ui.set_window_active(false);
+    assert_ne!(focused, ui.scene());
+}
+
+#[test]
+fn a_text_edit_breaks_lines_and_moves_between_them() {
+    let mut ui = ui();
+    let root = crate::handles::Item::new(&mut ui, None).unwrap();
+    let edit = crate::handles::TextEdit::new(&mut ui, Some(root.id)).unwrap();
+    edit.props.font.set(&mut ui, inter(14.0));
+    edit.common.width.set(&mut ui, 120.0);
+    ui.force_active_focus(edit.id);
+    type_text(&mut ui, "one");
+    assert!(ui.key_press(&crate::KeyEvent::named("Return")));
+    type_text(&mut ui, "two");
+    assert_eq!(&*ui.get(edit.props.text), "one\ntwo");
+    let one_line = ui.get(edit.common.implicit_height) / 2.0;
+    // Up goes to the line above, at the same place across.
+    assert!(ui.key_press(&crate::KeyEvent::named("Up")));
+    assert_eq!(ui.get(edit.props.cursor_position), 3);
+    assert!(ui.key_press(&crate::KeyEvent::named("Down")));
+    assert_eq!(ui.get(edit.props.cursor_position), 7);
+    // Long text breaks between words when wrapping is on.
+    edit.props.text.set(
+        &mut ui,
+        Rc::from("the quick brown fox jumps over the lazy dog"),
+    );
+    let unwrapped = ui.get(edit.common.implicit_height);
+    assert!((unwrapped - one_line).abs() < 0.01);
+    edit.props.wrap_mode.set(&mut ui, crate::wrap::WRAP);
+    let wrapped = ui.get(edit.common.implicit_height);
+    assert!(
+        wrapped >= 3.0 * one_line,
+        "{wrapped} for lines of {one_line}"
+    );
+    for op in ui.scene() {
+        if let DrawOp::Text { run, .. } = op {
+            assert!(
+                run.width / ui.scale() <= 120.5,
+                "a line is wider than the edit"
+            );
+        }
+    }
 }

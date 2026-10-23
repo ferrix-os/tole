@@ -64,6 +64,14 @@ pub(crate) const MODULES: &[(&str, &str, &[Source])] = &[
                 "GroupBox.tole",
                 include_str!("../modules/Fx/Controls/GroupBox.tole"),
             ),
+            (
+                "TextField.tole",
+                include_str!("../modules/Fx/Controls/TextField.tole"),
+            ),
+            (
+                "TextArea.tole",
+                include_str!("../modules/Fx/Controls/TextArea.tole"),
+            ),
         ],
     ),
 ];

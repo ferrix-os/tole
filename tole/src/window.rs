@@ -8,11 +8,18 @@
 //! damaged parts are drawn again and handed over, paced by the
 //! compositor's frame callbacks. What tole does not take -- keys, timers,
 //! a close request -- comes back as the toolkit's events.
+//!
+//! The clipboard goes through `ext_data_control_v1` when the compositor
+//! offers it (hyprix does): a copy in a text field is offered as the
+//! selection, and a paste reads the selection's text, or takes the
+//! window's own copy while that is still the selection. Without it the
+//! `Ui` keeps copies to itself.
 
 use std::time::Duration;
 
 use compositor_toolkit::{
-    Client, Error, Event, KeyboardEvent, PointerEvent, SurfaceId, ToplevelOptions,
+    Client, CursorShape, Error, Event, KeyboardEvent, ObjectId, PointerEvent, SurfaceId,
+    ToplevelOptions, Value,
 };
 
 use crate::Frame;
@@ -62,6 +69,199 @@ pub struct Window {
     closed: bool,
     /// When it opened: the animations' clock counts from here.
     opened: std::time::Instant,
+    /// The desktop's clipboard, when the compositor offers one.
+    clipboard: Option<Clipboard>,
+}
+
+/// The types text is offered and read as, best first.
+const TEXT_TYPES: [&str; 3] = ["text/plain;charset=utf-8", "text/plain", "UTF8_STRING"];
+
+/// The desktop's clipboard through `ext_data_control_v1`.
+#[derive(Debug)]
+struct Clipboard {
+    /// The manager.
+    manager: ObjectId,
+    /// The seat's data device.
+    device: ObjectId,
+    /// The source this window offers, and its text, until another
+    /// program's copy cancels it.
+    offered: Option<(ObjectId, std::rc::Rc<str>)>,
+    /// The offer the selection is now, and the types it said it has.
+    selection: Option<ObjectId>,
+    /// Every live offer's types.
+    types: Vec<(ObjectId, String)>,
+}
+
+impl Clipboard {
+    /// The clipboard, when the compositor has `ext_data_control`.
+    fn bind(client: &mut Client) -> Option<Self> {
+        use compositor_toolkit::protocol::ext_data_control::{
+            self as control, ext_data_control_device_v1 as device,
+            ext_data_control_manager_v1 as manager,
+        };
+        let seat = client.seat()?;
+        let (bound, _) = client
+            .bind(&control::EXT_DATA_CONTROL_MANAGER_V1, 1, None)
+            .ok()?;
+        let made = client.new_object(&control::EXT_DATA_CONTROL_DEVICE_V1, 1);
+        client
+            .request(
+                bound,
+                manager::request::GET_DATA_DEVICE,
+                &[Value::NewId(made), Value::Object(seat)],
+            )
+            .ok()?;
+        client.adopt_new_ids(
+            made,
+            device::event::DATA_OFFER,
+            &control::EXT_DATA_CONTROL_OFFER_V1,
+            1,
+        );
+        Some(Clipboard {
+            manager: bound,
+            device: made,
+            offered: None,
+            selection: None,
+            types: Vec::new(),
+        })
+    }
+
+    /// Offer `text` as the selection.
+    fn copy(&mut self, client: &mut Client, text: std::rc::Rc<str>) {
+        use compositor_toolkit::protocol::ext_data_control::{
+            self as control, ext_data_control_device_v1 as device,
+            ext_data_control_manager_v1 as manager, ext_data_control_source_v1 as source,
+        };
+        let made = client.new_object(&control::EXT_DATA_CONTROL_SOURCE_V1, 1);
+        if client
+            .request(
+                self.manager,
+                manager::request::CREATE_DATA_SOURCE,
+                &[Value::NewId(made)],
+            )
+            .is_err()
+        {
+            return;
+        }
+        for mime in TEXT_TYPES {
+            let _ = client.request(
+                made,
+                source::request::OFFER,
+                &[Value::Str(Some(mime.to_owned()))],
+            );
+        }
+        let _ = client.request(
+            self.device,
+            device::request::SET_SELECTION,
+            &[Value::Object(made)],
+        );
+        let _ = client.flush();
+        if let Some((old, _)) = self.offered.replace((made, text)) {
+            let _ = client.request(old, source::request::DESTROY, &[]);
+        }
+    }
+
+    /// An event for one of the clipboard's objects; whether it was one.
+    fn event(
+        &mut self,
+        client: &mut Client,
+        object: ObjectId,
+        opcode: u16,
+        args: &[Value],
+    ) -> bool {
+        use compositor_toolkit::protocol::ext_data_control::{
+            ext_data_control_device_v1 as device, ext_data_control_offer_v1 as offer,
+            ext_data_control_source_v1 as source,
+        };
+        if let Some((offered, text)) = &self.offered
+            && object == *offered
+        {
+            if opcode == source::event::SEND {
+                if let Some(Value::Fd(fd)) = args.get(1) {
+                    write_and_close(*fd, text.as_bytes());
+                }
+            } else if opcode == source::event::CANCELLED {
+                let _ = client.request(*offered, source::request::DESTROY, &[]);
+                self.offered = None;
+            }
+            return true;
+        }
+        if object == self.device {
+            if opcode == device::event::SELECTION {
+                let named = args
+                    .first()
+                    .and_then(Value::as_object)
+                    .filter(|o| !o.is_null());
+                if let Some(old) = self.selection.take()
+                    && Some(old) != named
+                {
+                    let _ = client.request(old, offer::request::DESTROY, &[]);
+                    self.types.retain(|(o, _)| *o != old);
+                }
+                self.selection = named;
+            }
+            return true;
+        }
+        if opcode == offer::event::OFFER
+            && let Some(mime) = args.first().and_then(Value::as_str)
+        {
+            self.types.push((object, mime.to_owned()));
+            return true;
+        }
+        false
+    }
+
+    /// The selection's text: the window's own copy while it is the
+    /// selection, else read from the program that copied it, waiting a
+    /// moment for it.
+    fn read(&mut self, client: &mut Client) -> String {
+        use compositor_toolkit::protocol::ext_data_control::ext_data_control_offer_v1 as offer;
+        use std::io::Read as _;
+        use std::os::fd::AsRawFd as _;
+        if let Some((_, text)) = &self.offered {
+            return text.to_string();
+        }
+        let Some(held) = self.selection else {
+            return String::new();
+        };
+        let Some(mime) = TEXT_TYPES.iter().find(|wanted| {
+            self.types
+                .iter()
+                .any(|(o, m)| *o == held && m.as_str() == **wanted)
+        }) else {
+            return String::new();
+        };
+        let Ok((mut reading, writing)) = std::os::unix::net::UnixStream::pair() else {
+            return String::new();
+        };
+        let sent = client.request(
+            held,
+            offer::request::RECEIVE,
+            &[
+                Value::Str(Some((*mime).to_owned())),
+                Value::Fd(writing.as_raw_fd()),
+            ],
+        );
+        let _ = client.flush();
+        drop(writing);
+        if sent.is_err() {
+            return String::new();
+        }
+        let _ = reading.set_read_timeout(Some(Duration::from_millis(500)));
+        let mut bytes = Vec::new();
+        let _ = reading.read_to_end(&mut bytes);
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+}
+
+/// Write `bytes` to the descriptor a paste handed over, and close it.
+fn write_and_close(fd: i32, bytes: &[u8]) {
+    use std::io::Write as _;
+    use std::os::fd::FromRawFd as _;
+    // SAFETY: the descriptor arrived with the compositor's `send` event and
+    // nothing else in this process holds it; the file owns and closes it.
+    let mut pipe = unsafe { std::fs::File::from_raw_fd(fd) };
+    let _ = pipe.write_all(bytes);
 }
 
 impl Window {
@@ -79,7 +279,9 @@ impl Window {
             size: options.size,
             ..ToplevelOptions::default()
         })?;
+        let clipboard = Clipboard::bind(&mut client);
         Ok(Window {
+            clipboard,
             client,
             surface,
             root,
@@ -131,6 +333,7 @@ impl Window {
         } else {
             timeout
         };
+        ui.set_clipboard_external(self.clipboard.is_some());
         let events = self.client.dispatch(timeout)?;
         ui.tick(self.opened.elapsed().as_secs_f64() * 1000.0);
         let mut rest = Vec::new();
@@ -167,8 +370,40 @@ impl Window {
                 }
                 Event::Pointer(pointer) => self.pointer(ui, pointer, &mut rest),
                 Event::Keyboard(keyboard) => self.keyboard(ui, keyboard, &mut rest),
+                Event::Object {
+                    object,
+                    opcode,
+                    ref args,
+                    ..
+                } if self
+                    .clipboard
+                    .as_mut()
+                    .is_some_and(|c| c.event(&mut self.client, object, opcode, args)) => {}
                 other => rest.push(other),
             }
+        }
+        // What the text fields asked of the clipboard.
+        if let Some(text) = ui.take_copied()
+            && let Some(clipboard) = self.clipboard.as_mut()
+        {
+            clipboard.copy(&mut self.client, text);
+        }
+        if ui.take_paste_request() {
+            let text = self
+                .clipboard
+                .as_mut()
+                .map(|c| c.read(&mut self.client))
+                .unwrap_or_default();
+            ui.paste(&text);
+        }
+        if let Some(cursor) = ui.take_cursor() {
+            self.client.set_cursor(match cursor {
+                crate::Cursor::Default => CursorShape::Default,
+                crate::Cursor::Pointer => CursorShape::Pointer,
+                crate::Cursor::Text => CursorShape::Text,
+                crate::Cursor::ColResize => CursorShape::Other(30),
+                crate::Cursor::RowResize => CursorShape::Other(31),
+            });
         }
         ui.update();
         if ui.take_changed() {
@@ -219,6 +454,7 @@ impl Window {
             KeyboardEvent::Leave(surface) if *surface == self.surface => {
                 ui.set_window_active(false);
             }
+            KeyboardEvent::Modifiers(modifiers) => ui.set_shift(modifiers.shift),
             KeyboardEvent::Key(key) if key.surface.is_none_or(|s| s == self.surface) => {
                 let event = crate::KeyEvent {
                     key: std::rc::Rc::from(key.keysym.unwrap_or("")),

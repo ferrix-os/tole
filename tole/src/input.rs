@@ -1,27 +1,83 @@
-//! The pointer: which `MouseArea` it is over, presses, holds and turns the
-//! wheel on (`docs/UI-FRAMEWORK.md` §4.7).
+//! The pointer: which `MouseArea` or text field it is over, presses,
+//! holds and turns the wheel on (`docs/UI-FRAMEWORK.md` §4.7).
 //!
-//! The topmost enabled area under the pointer, in paint order and inside
-//! every clip around it, takes a press and holds the pointer until the
-//! release, as Qt's grab does; the release is a click when the pointer is
-//! still over it. Hover goes to the topmost area that asks for it. A
-//! window host feeds the pointer in logical pixels; tests feed it the
-//! same way.
+//! The topmost enabled area or text field under the pointer, in paint
+//! order and inside every clip around it, takes a press and holds the
+//! pointer until the release, as Qt's grab does; the release is a click
+//! when the pointer is still over it. A press soon after another in the
+//! same place counts on (a double click, a triple). Hover goes to the
+//! topmost area that asks for it. A text field pressed takes the active
+//! focus and the caret; dragged, it selects. A window host feeds the
+//! pointer in logical pixels; tests feed it the same way.
 
 use crate::item::{ItemId, Kind, MouseAreaProps};
 use crate::render::Rect;
 use crate::ui::Ui;
 use crate::value::Value;
 
+/// How long after a press another counts on from it, in milliseconds of
+/// the `Ui`'s clock.
+const MULTI_CLICK_MS: f64 = 400.0;
+
+/// How far from a press another may be and still count on from it.
+const MULTI_CLICK_SLOP: f32 = 4.0;
+
+/// The pointer's shape, as the item under it asks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Cursor {
+    /// The arrow.
+    #[default]
+    Default,
+    /// A hand, over something to click.
+    Pointer,
+    /// The I-beam, over text to type into.
+    Text,
+    /// Across, over something that moves a boundary sideways.
+    ColResize,
+    /// Down, over something that moves a boundary up and down.
+    RowResize,
+}
+
+/// `cursorShape`'s values, as Qt numbers them.
+pub mod cursor_shape {
+    /// `Qt.ArrowCursor`.
+    pub const ARROW: i32 = 0;
+    /// `Qt.IBeamCursor`.
+    pub const IBEAM: i32 = 4;
+    /// `Qt.SplitVCursor`.
+    pub const SPLIT_V: i32 = 11;
+    /// `Qt.SplitHCursor`.
+    pub const SPLIT_H: i32 = 12;
+    /// `Qt.PointingHandCursor`.
+    pub const POINTING_HAND: i32 = 13;
+}
+
+/// What is under the pointer and takes it.
+#[derive(Clone, Copy, Debug)]
+enum Hit {
+    /// A `MouseArea`.
+    Area(MouseAreaProps),
+    /// A `TextInput` or `TextEdit`.
+    Text,
+}
+
 /// The pointer's state.
 #[derive(Debug, Default)]
 pub(crate) struct Input {
     /// Where it is, in the window; `None` outside.
     at: Option<(f32, f32)>,
-    /// The area holding it since a press.
+    /// What holds it since a press.
     grab: Option<ItemId>,
     /// The area it hovers.
     hover: Option<ItemId>,
+    /// The last press: when, where, and how many in a row.
+    last_press: Option<(f64, f32, f32, u32)>,
+    /// Whether Shift is held, as the window says.
+    shift: bool,
+    /// The shape it has now.
+    cursor: Cursor,
+    /// Whether the shape changed since the window last asked.
+    cursor_changed: bool,
 }
 
 impl Ui {
@@ -30,7 +86,7 @@ impl Ui {
         self.update();
         self.input.at = Some((x, y));
         if let Some(grab) = self.input.grab {
-            self.follow(grab, x, y);
+            self.follow(grab, x, y, true);
         }
         self.rehover();
     }
@@ -42,20 +98,52 @@ impl Ui {
         self.rehover();
     }
 
+    /// Whether Shift is held: a press in a text field with it stretches
+    /// the selection.
+    pub fn set_shift(&mut self, held: bool) {
+        self.input.shift = held;
+    }
+
     /// The button went down.
     pub fn pointer_press(&mut self) {
         self.update();
         let Some((x, y)) = self.input.at else {
             return;
         };
-        let Some((item, area)) = self.areas_at(x, y).into_iter().last() else {
+        let now = self.clock_now();
+        let clicks = match self.input.last_press {
+            Some((then, px, py, count))
+                if now - then <= MULTI_CLICK_MS
+                    && (px - x).abs() <= MULTI_CLICK_SLOP
+                    && (py - y).abs() <= MULTI_CLICK_SLOP =>
+            {
+                count + 1
+            }
+            _ => 1,
+        };
+        self.input.last_press = Some((now, x, y, clicks));
+        let Some((item, hit)) = self.hits_at(x, y).into_iter().last() else {
             return;
         };
         self.input.grab = Some(item);
-        area.pressed.set(self, true);
-        area.contains_mouse.set(self, true);
-        self.follow(item, x, y);
-        self.emit(area.on_pressed, Vec::new());
+        match hit {
+            Hit::Area(area) => {
+                area.pressed.set(self, true);
+                area.contains_mouse.set(self, true);
+                self.follow(item, x, y, false);
+                self.emit(area.on_pressed, Vec::new());
+                if clicks == 2 {
+                    self.emit(area.double_clicked, Vec::new());
+                }
+            }
+            Hit::Text => {
+                self.force_active_focus(item);
+                if let Some(rect) = self.rect_of(item) {
+                    let shift = self.input.shift;
+                    self.text_press(item, (x - rect.x, y - rect.y), clicks, shift);
+                }
+            }
+        }
     }
 
     /// The button came up.
@@ -96,6 +184,12 @@ impl Ui {
         }
     }
 
+    /// The pointer's shape, when it changed since the last call: for the
+    /// window to set.
+    pub fn take_cursor(&mut self) -> Option<Cursor> {
+        core::mem::take(&mut self.input.cursor_changed).then_some(self.input.cursor)
+    }
+
     /// Forget `item` if the pointer held or hovered it.
     pub(crate) fn forget_input(&mut self, item: ItemId) {
         if self.input.grab == Some(item) {
@@ -107,26 +201,40 @@ impl Ui {
     }
 
     /// Hover the topmost area that asks for it, and say so to the one it
-    /// leaves and the one it enters.
+    /// leaves and the one it enters; and take the shape of what is under
+    /// the pointer.
     fn rehover(&mut self) {
-        let next = match self.input.at {
-            Some((x, y)) => {
-                let areas = self.areas_at(x, y);
-                let mut found = None;
-                for (item, area) in areas.into_iter().rev() {
-                    if self.get(area.hover_enabled) {
-                        found = Some(item);
-                        break;
-                    }
-                }
-                found
-            }
-            None => None,
+        let hits = match self.input.at {
+            Some((x, y)) => self.hits_at(x, y),
+            None => Vec::new(),
         };
+        let shape = match self
+            .input
+            .grab
+            .or_else(|| hits.last().map(|(item, _)| *item))
+        {
+            Some(item) => self.cursor_of(item),
+            None => Cursor::Default,
+        };
+        if shape != self.input.cursor {
+            self.input.cursor = shape;
+            self.input.cursor_changed = true;
+        }
+        let mut next = None;
+        for (item, hit) in hits.into_iter().rev() {
+            if let Hit::Area(area) = hit
+                && self.get(area.hover_enabled)
+            {
+                next = Some(item);
+                break;
+            }
+        }
         let before = self.input.hover;
         if before == next {
-            if let (Some(item), Some((x, y))) = (next, self.input.at) {
-                self.follow(item, x, y);
+            if let (Some(item), Some((x, y))) = (next, self.input.at)
+                && self.input.grab != Some(item)
+            {
+                self.follow(item, x, y, false);
             }
             return;
         }
@@ -144,19 +252,50 @@ impl Ui {
         {
             area.contains_mouse.set(self, true);
             if let Some((x, y)) = self.input.at {
-                self.follow(item, x, y);
+                self.follow(item, x, y, false);
             }
             self.emit(area.entered, Vec::new());
         }
     }
 
-    /// Set `item`'s `mouseX` and `mouseY` from the window's (`x`, `y`).
-    fn follow(&mut self, item: ItemId, x: f32, y: f32) {
-        let (Some(area), Some(rect)) = (self.mouse_area(item), self.rect_of(item)) else {
+    /// The shape `item` asks for.
+    fn cursor_of(&mut self, item: ItemId) -> Cursor {
+        if self.text_input(item).is_some() {
+            return Cursor::Text;
+        }
+        let Some(area) = self.mouse_area(item) else {
+            return Cursor::Default;
+        };
+        match self.get(area.cursor_shape) {
+            cursor_shape::POINTING_HAND => Cursor::Pointer,
+            cursor_shape::IBEAM => Cursor::Text,
+            cursor_shape::SPLIT_H => Cursor::ColResize,
+            cursor_shape::SPLIT_V => Cursor::RowResize,
+            _ => Cursor::Default,
+        }
+    }
+
+    /// Set `item`'s `mouseX` and `mouseY` from the window's (`x`, `y`);
+    /// when the pointer `moved` while a press it took is held, say so,
+    /// and in a text field, select to there.
+    fn follow(&mut self, item: ItemId, x: f32, y: f32, moved: bool) {
+        let Some(rect) = self.rect_of(item) else {
+            return;
+        };
+        if self.text_input(item).is_some() {
+            if moved && self.input.grab == Some(item) {
+                self.text_drag(item, (x - rect.x, y - rect.y));
+            }
+            return;
+        }
+        let Some(area) = self.mouse_area(item) else {
             return;
         };
         area.mouse_x.set(self, x - rect.x);
         area.mouse_y.set(self, y - rect.y);
+        if moved && self.input.grab == Some(item) {
+            self.emit(area.position_changed, Vec::new());
+        }
     }
 
     /// Where `item` is in the window.
@@ -177,22 +316,34 @@ impl Ui {
     /// The enabled, visible areas under (`x`, `y`), in paint order:
     /// topmost last.
     fn areas_at(&mut self, x: f32, y: f32) -> Vec<(ItemId, MouseAreaProps)> {
+        self.hits_at(x, y)
+            .into_iter()
+            .filter_map(|(item, hit)| match hit {
+                Hit::Area(area) => Some((item, area)),
+                Hit::Text => None,
+            })
+            .collect()
+    }
+
+    /// The enabled, visible areas and text fields under (`x`, `y`), in
+    /// paint order: topmost last.
+    fn hits_at(&mut self, x: f32, y: f32) -> Vec<(ItemId, Hit)> {
         let mut out = Vec::new();
         for root in self.roots.clone() {
-            self.areas_in(root, (0.0, 0.0), None, (x, y), &mut out);
+            self.hits_in(root, (0.0, 0.0), None, (x, y), &mut out);
         }
         out
     }
 
-    /// [`Ui::areas_at`] under `item`. A disabled or hidden item hides its
+    /// [`Ui::hits_at`] under `item`. A disabled or hidden item hides its
     /// whole subtree from the pointer.
-    fn areas_in(
+    fn hits_in(
         &mut self,
         item: ItemId,
         origin: (f32, f32),
         clip: Option<Rect>,
         point: (f32, f32),
-        out: &mut Vec<(ItemId, MouseAreaProps)>,
+        out: &mut Vec<(ItemId, Hit)>,
     ) {
         let Some(common) = self.common(item) else {
             return;
@@ -206,12 +357,12 @@ impl Ui {
             self.get(common.width),
             self.get(common.height),
         );
-        let inside_clip = clip.is_none_or(|clip| clip.contains(point.0, point.1));
-        if let Some(Kind::MouseArea(area)) = self.kind(item)
-            && inside_clip
-            && rect.contains(point.0, point.1)
-        {
-            out.push((item, area));
+        let inside = clip.is_none_or(|clip| clip.contains(point.0, point.1))
+            && rect.contains(point.0, point.1);
+        match self.kind(item) {
+            Some(Kind::MouseArea(area)) if inside => out.push((item, Hit::Area(area))),
+            Some(Kind::TextInput(_)) if inside => out.push((item, Hit::Text)),
+            _ => {}
         }
         let clip = if self.get(common.clip) {
             Some(clip.map_or(rect, |outer| outer.intersect(&rect)))
@@ -219,7 +370,7 @@ impl Ui {
             clip
         };
         for child in self.children(item).to_vec() {
-            self.areas_in(child, (rect.x, rect.y), clip, point, out);
+            self.hits_in(child, (rect.x, rect.y), clip, point, out);
         }
     }
 }

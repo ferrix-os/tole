@@ -157,6 +157,8 @@ pub struct Ui {
     updating: bool,
     /// The animations' clock.
     pub(crate) clock: crate::anim::Clock,
+    /// The clipboard: the last copy, and what a window has to take.
+    pub(crate) clipboard: crate::textinput::Clipboard,
     /// The items whose `checked` is exclusive among their siblings'.
     pub(crate) exclusives: Vec<(ItemId, Prop<bool>)>,
     /// The singletons, by type: each made the first time it is asked for.
@@ -206,6 +208,7 @@ impl Ui {
             effects: Vec::new(),
             updating: false,
             clock: crate::anim::Clock::default(),
+            clipboard: crate::textinput::Clipboard::default(),
             exclusives: Vec::new(),
             globals: std::collections::HashMap::new(),
         };

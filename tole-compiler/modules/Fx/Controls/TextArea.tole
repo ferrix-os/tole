@@ -1,0 +1,59 @@
+// Lines of text to type: as a TextField, with Return breaking a line,
+// Up and Down moving between lines, and lines broken at the width
+// (`wrapMode: TextEdit.NoWrap` keeps them whole). It grows with its text
+// unless given a height, and then scrolls by the wheel.
+import Fx
+
+component TextArea : Rectangle {
+    id: area
+    property alias text: edit.text
+    property alias readOnly: edit.readOnly
+    property alias wrapMode: edit.wrapMode
+    property alias cursorPosition: edit.cursorPosition
+    property alias selectedText: edit.selectedText
+    property string placeholderText
+    signal textEdited()
+
+    implicitWidth: 260
+    implicitHeight: max(edit.implicitHeight + 16, 64)
+    radius: Theme.radius
+    opacity: enabled ? 1 : 0.45
+    color: edit.readOnly ? Theme.bg3 : Theme.bg
+    border.width: edit.activeFocus ? 2 : 1
+    border.color: edit.activeFocus ? Theme.accent : Theme.line3
+
+    MouseArea {
+        anchors.fill: parent
+        cursorShape: Qt.IBeamCursor
+        onPressed: edit.forceActiveFocus()
+    }
+    Text {
+        x: 10; y: 8
+        visible: edit.text == ""
+        text: area.placeholderText
+        font: edit.font
+        color: Theme.ink5
+        verticalAlignment: Text.AlignTop
+    }
+    Flickable {
+        id: flick
+        anchors.fill: parent
+        anchors.leftMargin: 10
+        anchors.rightMargin: 10
+        anchors.topMargin: 8
+        anchors.bottomMargin: 8
+        clip: true
+        contentHeight: edit.implicitHeight
+        TextEdit {
+            id: edit
+            width: flick.width
+            activeFocusOnTab: true
+            wrapMode: TextEdit.Wrap
+            font: Theme.sans()
+            color: Theme.ink
+            cursorColor: Theme.ink
+            selectionColor: alpha(Theme.accent, 0.3)
+            onTextEdited: area.textEdited()
+        }
+    }
+}

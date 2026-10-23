@@ -1,0 +1,52 @@
+// One line of text to type: the caret, a selection by the pointer and
+// the keys, Ctrl+A, Ctrl+C, Ctrl+X and Ctrl+V through the clipboard.
+// `accepted` on Return; a password shows dots (`echoMode`).
+import Fx
+
+component TextField : Rectangle {
+    id: field
+    property alias text: input.text
+    property alias readOnly: input.readOnly
+    property alias echoMode: input.echoMode
+    property alias cursorPosition: input.cursorPosition
+    property alias selectedText: input.selectedText
+    property string placeholderText
+    signal accepted()
+    signal textEdited()
+
+    implicitWidth: 200
+    implicitHeight: Theme.controlHeight
+    radius: Theme.radius
+    opacity: enabled ? 1 : 0.45
+    color: input.readOnly ? Theme.bg3 : Theme.bg
+    border.width: input.activeFocus ? 2 : 1
+    border.color: input.activeFocus ? Theme.accent : Theme.line3
+
+    // A press beside the text gives it the focus too.
+    MouseArea {
+        anchors.fill: parent
+        cursorShape: Qt.IBeamCursor
+        onPressed: input.forceActiveFocus()
+    }
+    Text {
+        anchors.fill: input
+        visible: input.text == ""
+        text: field.placeholderText
+        font: input.font
+        color: Theme.ink5
+        elide: Text.ElideRight
+    }
+    TextInput {
+        id: input
+        anchors.fill: parent
+        anchors.leftMargin: 10
+        anchors.rightMargin: 10
+        activeFocusOnTab: true
+        font: Theme.sans()
+        color: Theme.ink
+        cursorColor: Theme.ink
+        selectionColor: alpha(Theme.accent, 0.3)
+        onAccepted: field.accepted()
+        onTextEdited: field.textEdited()
+    }
+}

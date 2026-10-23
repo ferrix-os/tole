@@ -575,16 +575,18 @@ component Transitions : Rectangle {
 ### Controls and the theme
 
 `import Fx.Controls` brings the framework's controls: `Button`,
-`CheckBox`, `RadioButton`, `Switch`, `Label`, `ProgressBar`, `TabBar`
-and `GroupBox` so far, each a `.tole` file inside the compiler, written
-on the primitives as Qt Quick Controls are in QML. There is one style;
+`CheckBox`, `RadioButton`, `Switch`, `Label`, `ProgressBar`, `TabBar`,
+`GroupBox`, `TextField` and `TextArea` so far, each a `.tole` file
+inside the compiler, written on the primitives as Qt Quick Controls are
+in QML. There is one style;
 every colour, radius and face in it is a token of the `Theme`
 singleton, the lode viewer's palette in light and dark. Setting
 `Theme.dark` (from markup, or from Rust:
 `fx_controls::Theme::instance(&mut ui).dark.set(&mut ui, true)`)
 switches every token, and every control with them; a program gives its
 own accent the same way. The two pictures are the same file, drawn
-with `Theme.dark` false and true.
+with `Theme.dark` false and true, after a double click on "nazuna" in
+the first field.
 
 ```qml
 // Fx.Controls in one window: every control in the style's one look, its
@@ -594,7 +596,7 @@ import Fx
 import Fx.Controls
 
 component Controls : Rectangle {
-    width: 660; height: 430
+    width: 700; height: 520
     color: Theme.bg2
 
     TabBar {
@@ -626,11 +628,20 @@ component Controls : Rectangle {
             Switch { text: "Notifications"; checked: true }
             Switch { text: "Quiet hours" }
         }
-        GroupBox {
-            title: "PROGRESS"
-            Label { text: "Indexing 3 of 4 boots" }
-            ProgressBar { width: 180; value: 0.62 }
-            Label { text: "Disabled label"; enabled: false }
+        Column {
+            spacing: 16
+            GroupBox {
+                title: "TEXT"
+                TextField { id: host; width: 200; text: "nazuna.local" }
+                TextField { width: 200; placeholderText: "Passphrase"; echoMode: TextInput.Password; text: "hunter22" }
+                TextField { width: 200; placeholderText: "Search the log" }
+                TextArea { width: 200; text: "Lines break at the width, between words." }
+            }
+            GroupBox {
+                title: "PROGRESS"
+                Label { text: "Indexing 3 of 4 boots" }
+                ProgressBar { width: 200; value: 0.62 }
+            }
         }
     }
 }
@@ -655,6 +666,17 @@ What made them possible in the markup:
 * **Parameters with defaults**: `Theme.sans()` is 13 px, regular.
 * **`Exclusive.checked: checked`**: among the items beside each other
   that say it, one is checked at a time, as radio buttons are.
+
+The text fields stand on two primitives, `TextInput` (one line,
+scrolled across to keep the caret in view) and `TextEdit` (lines,
+broken between words at its width): a caret, a selection by the pointer
+(a double click takes a word, a third click the line) and by Shift with
+the arrows, Home and End, word moves with Control, and Ctrl+A, Ctrl+C,
+Ctrl+X and Ctrl+V. A letter is typed only with neither Control nor Alt
+held. In a window, copies and pastes go through the desktop's clipboard
+(`ext_data_control_v1`, which hyprix offers); without one, the `Ui`
+keeps its last copy itself. A password (`echoMode: TextInput.Password`)
+shows dots and is never copied.
 
 ### In a window
 

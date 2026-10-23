@@ -164,6 +164,10 @@ pub(crate) enum Kind {
     Flickable,
     /// `ListView`.
     ListView,
+    /// `TextInput`.
+    TextInput,
+    /// `TextEdit`.
+    TextEdit,
 }
 
 impl Kind {
@@ -185,6 +189,8 @@ impl Kind {
             "Repeater" => Kind::Repeater,
             "Flickable" => Kind::Flickable,
             "ListView" => Kind::ListView,
+            "TextInput" => Kind::TextInput,
+            "TextEdit" => Kind::TextEdit,
             _ => return None,
         })
     }
@@ -207,6 +213,8 @@ impl Kind {
             Kind::Repeater => "::tole::handles::Repeater",
             Kind::Flickable => "::tole::handles::Flickable",
             Kind::ListView => "::tole::handles::ListView",
+            Kind::TextInput => "::tole::handles::TextInput",
+            Kind::TextEdit => "::tole::handles::TextEdit",
         }
     }
 
@@ -282,6 +290,22 @@ impl Kind {
             (Kind::MouseArea, ["containsMouse"]) => Some((".props.contains_mouse", Ty::Bool)),
             (Kind::MouseArea, ["mouseX"]) => Some((".props.mouse_x", Ty::Real)),
             (Kind::MouseArea, ["mouseY"]) => Some((".props.mouse_y", Ty::Real)),
+            (Kind::MouseArea, ["cursorShape"]) => Some((".props.cursor_shape", Ty::Int)),
+            (Kind::TextInput | Kind::TextEdit, [name]) => match *name {
+                "text" => Some((".props.text", Ty::Str)),
+                "color" => Some((".props.color", Ty::Color)),
+                "font" => Some((".props.font", Ty::Font)),
+                "selectionColor" => Some((".props.selection_color", Ty::Color)),
+                "cursorColor" => Some((".props.cursor_color", Ty::Color)),
+                "cursorPosition" => Some((".props.cursor_position", Ty::Int)),
+                "selectionStart" => Some((".props.selection_start", Ty::Int)),
+                "selectionEnd" => Some((".props.selection_end", Ty::Int)),
+                "selectedText" => Some((".props.selected_text", Ty::Str)),
+                "readOnly" => Some((".props.read_only", Ty::Bool)),
+                "echoMode" => Some((".props.echo_mode", Ty::Int)),
+                "wrapMode" => Some((".props.wrap_mode", Ty::Int)),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -299,6 +323,10 @@ impl Kind {
             (Kind::MouseArea, "entered") => Some((".props.entered", &[])),
             (Kind::MouseArea, "exited") => Some((".props.exited", &[])),
             (Kind::MouseArea, "wheel") => Some((".props.wheel", &[("delta", Ty::Real)])),
+            (Kind::MouseArea, "doubleClicked") => Some((".props.double_clicked", &[])),
+            (Kind::MouseArea, "positionChanged") => Some((".props.position_changed", &[])),
+            (Kind::TextInput | Kind::TextEdit, "accepted") => Some((".props.accepted", &[])),
+            (Kind::TextInput | Kind::TextEdit, "textEdited") => Some((".props.text_edited", &[])),
             _ => None,
         }
     }
@@ -387,6 +415,15 @@ pub(crate) fn builtin_constant(space: &str, name: &str) -> Option<(&'static str,
         ("Qt", "AlignBottom") => ("::tole::align::BOTTOM", Ty::Int),
         ("Qt", "AlignVCenter") => ("::tole::align::V_CENTER", Ty::Int),
         ("Qt", "AlignCenter") => ("::tole::align::CENTER", Ty::Int),
+        ("Qt", "ArrowCursor") => ("::tole::cursor_shape::ARROW", Ty::Int),
+        ("Qt", "IBeamCursor") => ("::tole::cursor_shape::IBEAM", Ty::Int),
+        ("Qt", "PointingHandCursor") => ("::tole::cursor_shape::POINTING_HAND", Ty::Int),
+        ("Qt", "SplitHCursor") => ("::tole::cursor_shape::SPLIT_H", Ty::Int),
+        ("Qt", "SplitVCursor") => ("::tole::cursor_shape::SPLIT_V", Ty::Int),
+        ("TextInput", "Normal") => ("::tole::echo::NORMAL", Ty::Int),
+        ("TextInput", "Password") => ("::tole::echo::PASSWORD", Ty::Int),
+        ("TextEdit", "NoWrap") => ("::tole::wrap::NO_WRAP", Ty::Int),
+        ("TextEdit", "Wrap") => ("::tole::wrap::WRAP", Ty::Int),
         _ => return None,
     })
 }

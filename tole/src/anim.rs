@@ -288,6 +288,11 @@ pub(crate) struct Clock {
 }
 
 impl Ui {
+    /// The clock's last reading, in milliseconds.
+    pub(crate) fn clock_now(&self) -> f64 {
+        self.clock.now
+    }
+
     /// The clock reads `now` milliseconds: animations move to where they
     /// are then, and those that ended are dropped.
     pub fn tick(&mut self, now: f64) {

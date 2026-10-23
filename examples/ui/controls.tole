@@ -5,7 +5,7 @@ import Fx
 import Fx.Controls
 
 component Controls : Rectangle {
-    width: 660; height: 430
+    width: 700; height: 520
     color: Theme.bg2
 
     TabBar {
@@ -37,11 +37,20 @@ component Controls : Rectangle {
             Switch { text: "Notifications"; checked: true }
             Switch { text: "Quiet hours" }
         }
-        GroupBox {
-            title: "PROGRESS"
-            Label { text: "Indexing 3 of 4 boots" }
-            ProgressBar { width: 180; value: 0.62 }
-            Label { text: "Disabled label"; enabled: false }
+        Column {
+            spacing: 16
+            GroupBox {
+                title: "TEXT"
+                TextField { id: host; width: 200; text: "nazuna.local" }
+                TextField { width: 200; placeholderText: "Passphrase"; echoMode: TextInput.Password; text: "hunter22" }
+                TextField { width: 200; placeholderText: "Search the log" }
+                TextArea { width: 200; text: "Lines break at the width, between words." }
+            }
+            GroupBox {
+                title: "PROGRESS"
+                Label { text: "Indexing 3 of 4 boots" }
+                ProgressBar { width: 200; value: 0.62 }
+            }
         }
     }
 }

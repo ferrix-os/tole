@@ -337,7 +337,8 @@ impl Ui {
     /// taken.
     fn deliver(&mut self, item: ItemId, event: &KeyEvent, down: bool) -> bool {
         let Some(keys) = self.item(item).and_then(|data| data.keys.as_ref()) else {
-            return false;
+            // No handlers: a text field takes what it edits with.
+            return down && self.text_key(item, event);
         };
         let args = vec![Value::custom(event.clone())];
         if !down {
@@ -373,6 +374,9 @@ impl Ui {
             if core::mem::take(&mut self.focus.accepted) {
                 return true;
             }
+        }
+        if self.text_key(item, event) {
+            return true;
         }
         if let Some(target) = nav
             && self.exists(target)

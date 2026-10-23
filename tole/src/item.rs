@@ -88,6 +88,44 @@ pub struct TextProps {
     pub vertical_alignment: Prop<VAlign>,
 }
 
+/// A `TextInput`'s or `TextEdit`'s own properties and signals.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextInputProps {
+    /// The text.
+    pub text: Prop<Rc<str>>,
+    /// Its colour.
+    pub color: Prop<Color>,
+    /// Its font.
+    pub font: Prop<Font>,
+    /// What is under selected text.
+    pub selection_color: Prop<Color>,
+    /// The caret's colour.
+    pub cursor_color: Prop<Color>,
+    /// Where the caret is: a byte offset into the text.
+    pub cursor_position: Prop<i32>,
+    /// The selection's other end; the caret's place when nothing is
+    /// selected.
+    pub anchor: Prop<i32>,
+    /// The selection's first end (read only).
+    pub selection_start: Prop<i32>,
+    /// Its last end (read only).
+    pub selection_end: Prop<i32>,
+    /// What is selected (read only).
+    pub selected_text: Prop<Rc<str>>,
+    /// Whether keys may change it.
+    pub read_only: Prop<bool>,
+    /// `crate::echo`'s: a password shows dots.
+    pub echo_mode: Prop<i32>,
+    /// `crate::wrap`'s: whether a `TextEdit`'s lines break at its width.
+    pub wrap_mode: Prop<i32>,
+    /// Return or Enter in a `TextInput`.
+    pub accepted: crate::signal::SignalId,
+    /// The text was changed by keys, a paste or a cut.
+    pub text_edited: crate::signal::SignalId,
+    /// A `TextEdit`: lines, and Return breaks one.
+    pub multiline: bool,
+}
+
 /// A `Row`'s or `Column`'s own properties.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PositionerProps {
@@ -208,6 +246,8 @@ pub enum Kind {
     /// A `ListView`: a `Flickable` making delegates only for the rows in
     /// view.
     ListView(ListViewProps),
+    /// A `TextInput` or `TextEdit`: text typed into.
+    TextInput(TextInputProps),
 }
 
 /// A `MouseArea`'s own properties and signals.
@@ -237,6 +277,12 @@ pub struct MouseAreaProps {
     /// The wheel turned over it: the vertical delta, in logical pixels,
     /// positive down.
     pub wheel: crate::signal::SignalId,
+    /// A second press soon after one, in the same place.
+    pub double_clicked: crate::signal::SignalId,
+    /// The pointer moved while a press it took is held.
+    pub position_changed: crate::signal::SignalId,
+    /// The pointer's shape over it: `crate::cursor_shape`'s.
+    pub cursor_shape: Prop<i32>,
 }
 
 /// The kinds, to make one.
@@ -272,6 +318,10 @@ pub enum KindName {
     Flickable,
     /// [`Kind::ListView`].
     ListView,
+    /// [`Kind::TextInput`], one line.
+    TextInput,
+    /// [`Kind::TextInput`], lines.
+    TextEdit,
 }
 
 /// One item.
@@ -299,6 +349,9 @@ pub(crate) struct ItemData {
     pub(crate) content: Option<ItemId>,
     /// A `ListView`'s rows and delegates.
     pub(crate) view: Option<Rc<std::cell::RefCell<crate::view::ViewState>>>,
+    /// How far a `TextInput`'s text is scrolled across to keep the caret
+    /// in view, in logical pixels.
+    pub(crate) text_scroll: f32,
 }
 
 /// What an item holds for a component.
@@ -422,6 +475,49 @@ impl Ui {
                 });
                 Kind::Text(props)
             }
+            KindName::TextInput | KindName::TextEdit => {
+                let text = self.prop(Rc::<str>::from(""));
+                let cursor_position = self.prop(0_i32);
+                let anchor = self.prop(0_i32);
+                let props = TextInputProps {
+                    text,
+                    color: self.prop(Color::hex(0)),
+                    font: self.prop(Font::default()),
+                    selection_color: self.prop(Color::rgba(42, 98, 201, 64)),
+                    cursor_color: self.prop(Color::hex(0)),
+                    cursor_position,
+                    anchor,
+                    selection_start: self.prop(0_i32),
+                    selection_end: self.prop(0_i32),
+                    selected_text: self.prop(Rc::<str>::from("")),
+                    read_only: self.prop(false),
+                    echo_mode: self.prop(0_i32),
+                    wrap_mode: self.prop(0_i32),
+                    accepted: self.new_signal(),
+                    text_edited: self.new_signal(),
+                    multiline: kind == KindName::TextEdit,
+                };
+                props
+                    .selection_start
+                    .bind(self, move |ui| ui.get(cursor_position).min(ui.get(anchor)));
+                props
+                    .selection_end
+                    .bind(self, move |ui| ui.get(cursor_position).max(ui.get(anchor)));
+                props.selected_text.bind(self, move |ui| {
+                    let text = ui.get(text);
+                    let at = |v: i32| usize::try_from(v).unwrap_or(0).min(text.len());
+                    let (a, b) = (at(ui.get(cursor_position)), at(ui.get(anchor)));
+                    Rc::from(text.get(a.min(b)..a.max(b)).unwrap_or(""))
+                });
+                implicit_width.bind(self, move |ui| ui.text_input_implicit(props, None).0);
+                let width = common.width;
+                implicit_height.bind(self, move |ui| {
+                    let wraps = props.multiline && ui.get(props.wrap_mode) != 0;
+                    let at = if wraps { Some(ui.get(width)) } else { None };
+                    ui.text_input_implicit(props, at).1
+                });
+                Kind::TextInput(props)
+            }
             KindName::Row | KindName::Column => {
                 let props = PositionerProps {
                     spacing: self.prop(0.0_f32),
@@ -445,6 +541,9 @@ impl Ui {
                 entered: self.new_signal(),
                 exited: self.new_signal(),
                 wheel: self.new_signal(),
+                double_clicked: self.new_signal(),
+                position_changed: self.new_signal(),
+                cursor_shape: self.prop(0_i32),
             }),
         };
         let data = ItemData {
@@ -458,6 +557,7 @@ impl Ui {
             layout: None,
             content: None,
             view: None,
+            text_scroll: 0.0,
         };
         let id = self.place(data);
         match parent {
@@ -534,6 +634,8 @@ impl Ui {
                     m.entered,
                     m.exited,
                     m.wheel,
+                    m.double_clicked,
+                    m.position_changed,
                 ] {
                     self.free_signal(signal);
                 }
@@ -542,6 +644,10 @@ impl Ui {
                 for signal in keys.signals() {
                     self.free_signal(signal);
                 }
+            }
+            if let Kind::TextInput(t) = data.kind {
+                self.free_signal(t.accepted);
+                self.free_signal(t.text_edited);
             }
             self.forget_input(id);
             self.free_items.push(id.index);
@@ -875,12 +981,28 @@ fn props_of(data: &ItemData) -> Vec<crate::ui::PropId> {
                 p.cache_buffer.id,
             ]);
         }
+        Kind::TextInput(p) => ids.extend([
+            p.text.id,
+            p.color.id,
+            p.font.id,
+            p.selection_color.id,
+            p.cursor_color.id,
+            p.cursor_position.id,
+            p.anchor.id,
+            p.selection_start.id,
+            p.selection_end.id,
+            p.selected_text.id,
+            p.read_only.id,
+            p.echo_mode.id,
+            p.wrap_mode.id,
+        ]),
         Kind::MouseArea(p) => ids.extend([
             p.hover_enabled.id,
             p.pressed.id,
             p.contains_mouse.id,
             p.mouse_x.id,
             p.mouse_y.id,
+            p.cursor_shape.id,
         ]),
     }
     ids

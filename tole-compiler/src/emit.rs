@@ -1091,22 +1091,31 @@ impl Program {
         ))
     }
 
-    /// The item a `forceActiveFocus()` call is on: the element, or an id
-    /// or `parent` before it.
-    fn focus_call(&self, scope: &Scope<'_>, path: &[Ident]) -> Option<String> {
+    /// An item's method a call names: `forceActiveFocus()` or a text
+    /// field's `selectAll()`, on the element, or an id or `parent` before
+    /// it. Answers the item's local and the `Ui`'s method.
+    fn focus_call(&self, scope: &Scope<'_>, path: &[Ident]) -> Option<(String, &'static str)> {
+        let method = |name: &str| match name {
+            "forceActiveFocus" => Some("force_active_focus"),
+            "selectAll" => Some("select_all"),
+            _ => None,
+        };
         match path {
-            [call] if call.text == "forceActiveFocus" => {
-                scope.current.as_ref().map(|(v, _)| v.clone())
+            [call] => {
+                let method = method(&call.text)?;
+                scope.current.as_ref().map(|(v, _)| (v.clone(), method))
             }
-            [item, call] if call.text == "forceActiveFocus" => {
-                if item.text == "parent" {
+            [item, call] => {
+                let method = method(&call.text)?;
+                let var = if item.text == "parent" {
                     match &scope.parent {
                         Some(Target::Static(v, _)) => Some(v.clone()),
                         _ => None,
                     }
                 } else {
                     scope.ids.get(&item.text).map(|(v, _)| v.clone())
-                }
+                };
+                var.map(|v| (v, method))
             }
             _ => None,
         }
@@ -1147,12 +1156,15 @@ impl Program {
                     );
                 }
                 Stmt::Call(Expr::Call(path, args, pos)) => {
-                    if let Some(item) = self.focus_call(scope, path) {
+                    if let Some((item, method)) = self.focus_call(scope, path) {
                         if !args.is_empty() {
-                            return Err(diag(file, *pos, "`forceActiveFocus` takes no arguments"));
+                            return Err(diag(
+                                file,
+                                *pos,
+                                "`forceActiveFocus` and `selectAll` take no arguments",
+                            ));
                         }
-                        let _ =
-                            write!(out, "ui.force_active_focus(::tole::Element::id(&{item})); ");
+                        let _ = write!(out, "ui.{method}(::tole::Element::id(&{item})); ");
                     } else if let Some((signal, params)) = self.emitted(scope, path) {
                         if params.len() != args.len() {
                             return Err(diag(

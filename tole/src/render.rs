@@ -220,6 +220,7 @@ impl Ui {
                 }
             }
             Some(Kind::Text(props)) => self.text_op(props, place, ops),
+            Some(Kind::TextInput(props)) => self.text_input_ops(item, props, place, ops),
             _ => {}
         }
         let scale = self.scale();

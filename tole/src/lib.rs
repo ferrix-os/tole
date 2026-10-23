@@ -31,6 +31,7 @@ mod render;
 mod repeater;
 mod signal;
 mod text;
+mod textinput;
 mod ui;
 mod value;
 mod view;
@@ -41,9 +42,10 @@ pub use anim::{Animate, Easing, StateValue, Step, Transition, Tween, When};
 pub use cpu::CpuRenderer;
 pub use focus::{KeyEvent, Nav};
 pub use handles::Element;
+pub use input::{Cursor, cursor_shape};
 pub use item::{
     Common, FlickProps, FlowProps, GridProps, ItemId, Kind, KindName, ListViewProps,
-    MouseAreaProps, PositionerProps, RectangleProps, RepeaterProps, TextProps,
+    MouseAreaProps, PositionerProps, RectangleProps, RepeaterProps, TextInputProps, TextProps,
 };
 pub use layout::{Anchors, Line};
 pub use layouts::{LayoutProps, Solved, align};
@@ -51,6 +53,7 @@ pub use model::{AnyModel, Change, Model, ModelRc, ModelSource, ModelTracker, Vec
 pub use render::{DrawOp, Rect, Renderer, play};
 pub use repeater::{Delegate, DelegateFactory};
 pub use signal::{Emitted, Handler, SignalId};
+pub use textinput::{echo, wrap};
 pub use ui::{Effect, Prop, PropId, Ui};
 pub use value::{Color, CustomValue, Elide, Font, HAlign, PropType, VAlign, Value, group};
 pub use view::Chooser;
@@ -84,6 +87,12 @@ pub use compositor_text::Fonts;
 pub use tiny_skia;
 
 impl Ui {
+    /// How wide `text` is in `font`, in logical pixels.
+    pub fn text_width(&mut self, font: &Font, text: &str) -> f32 {
+        let scale = self.scale();
+        self.text.run(font, scale, &std::rc::Rc::from(text)).width / scale
+    }
+
     /// How many font faces were found: none means text draws nothing.
     #[must_use]
     pub fn faces(&self) -> usize {

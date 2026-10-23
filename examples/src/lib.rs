@@ -124,19 +124,46 @@ pub const DEMOS: [Demo; 9] = [
     },
     Demo {
         name: "controls-light",
-        about: "Fx.Controls in the light palette",
-        make: |ui| Controls::new(ui, None).map(|root| root.common()),
+        about: "Fx.Controls in the light palette, a word double-clicked in a field",
+        make: |ui| controls(ui, false),
     },
     Demo {
         name: "controls-dark",
         about: "the same, Theme.dark set",
-        make: |ui| {
-            let theme = fx_controls::Theme::instance(ui);
-            theme.dark.set(ui, true);
-            Controls::new(ui, None).map(|root| root.common())
-        },
+        make: |ui| controls(ui, true),
     },
 ];
+
+/// The controls demo, light or dark, with "nazuna" double-clicked in its
+/// first field.
+fn controls(ui: &mut Ui, dark: bool) -> Option<tole::Common> {
+    let theme = fx_controls::Theme::instance(ui);
+    theme.dark.set(ui, dark);
+    let root = Controls::new(ui, None)?;
+    let field = find_input(ui, "nazuna.local")?;
+    let rect = ui.rect_of(field)?;
+    for _ in 0..2 {
+        ui.pointer_move(rect.x + 12.0, rect.y + rect.h / 2.0);
+        ui.pointer_press();
+        ui.pointer_release();
+    }
+    ui.pointer_leave();
+    Some(root.common())
+}
+
+/// The first `TextInput` or `TextEdit`, anywhere, holding `text`.
+pub fn find_input(ui: &mut Ui, text: &str) -> Option<tole::ItemId> {
+    let mut stack: Vec<tole::ItemId> = ui.roots().to_vec();
+    while let Some(item) = stack.pop() {
+        if let Some(input) = ui.text_input(item)
+            && &*ui.get(input.text) == text
+        {
+            return Some(item);
+        }
+        stack.extend(ui.children(item).iter().rev());
+    }
+    None
+}
 
 /// Press and release the pointer at (`x`, `y`).
 pub fn click_at(ui: &mut Ui, x: f32, y: f32) {
@@ -536,6 +563,43 @@ mod tests {
         assert_ne!(light, dark);
         assert_eq!(dark, theme.bg.get(&mut ui));
         assert_eq!(Theme::instance(&mut ui), theme, "one per Ui");
+    }
+
+    #[test]
+    fn a_text_field_is_typed_into_and_its_alias_follows() {
+        use super::fx_controls::{TextField, TextFieldSignal};
+        use tole::Element;
+        let mut ui = tole::Ui::new(super::fonts());
+        let field = TextField::new(&mut ui, None).expect("made");
+        field.placeholder_text.set(&mut ui, "Host".into());
+        let _ = ui.render((200, 30), tole::Color::TRANSPARENT);
+        // A click beside the text focuses it too.
+        let rect = ui.rect_of(field.id()).expect("placed");
+        ui.pointer_move(rect.x + 4.0, rect.y + 4.0);
+        ui.pointer_press();
+        ui.pointer_release();
+        for key in ["n", "a", "z", "u", "n", "a"] {
+            super::key(&mut ui, key);
+        }
+        assert_eq!(
+            &*field.text.get(&mut ui),
+            "nazuna",
+            "typed through the alias"
+        );
+        assert!(super::find_text(&mut ui, "Host").is_some());
+        let shown = |ui: &mut tole::Ui| {
+            let text = super::find_text(ui, "Host").expect("placeholder");
+            ui.get(ui.common(text).expect("lives").visible)
+        };
+        assert!(!shown(&mut ui), "the placeholder hides once typed into");
+        field.text.set(&mut ui, "".into());
+        assert!(shown(&mut ui));
+        super::key(&mut ui, "Return");
+        assert!(
+            ui.take_signals()
+                .iter()
+                .any(|e| field.signal(e) == Some(TextFieldSignal::Accepted))
+        );
     }
 
     #[test]

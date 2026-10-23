@@ -6,7 +6,7 @@
 
 use crate::item::{
     Common, FlickProps, FlowProps, GridProps, ItemId, KindName, ListViewProps, MouseAreaProps,
-    PositionerProps, RectangleProps, RepeaterProps, TextProps,
+    PositionerProps, RectangleProps, RepeaterProps, TextInputProps, TextProps,
 };
 use crate::ui::Ui;
 
@@ -100,6 +100,15 @@ handle!(
 handle!(
     /// A `Repeater`.
     Repeater, Repeater, RepeaterProps, repeater
+);
+
+handle!(
+    /// A `TextInput`: one line typed into.
+    TextInput, TextInput, TextInputProps, text_input
+);
+handle!(
+    /// A `TextEdit`: lines typed into.
+    TextEdit, TextEdit, TextInputProps, text_input
 );
 
 handle!(
