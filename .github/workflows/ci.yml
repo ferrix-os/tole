@@ -1,0 +1,68 @@
+name: CI
+
+# tole is a component of Ferrix (https://github.com/ferrix-os/ferrix),
+# checked out at src/user/system/linux/tole beside the compositor's
+# workspace, whose `text` and `toolkit` crates it reaches by path. So CI
+# lays out that much of Ferrix and tole inside it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  authors:
+    name: One author per commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v6
+        with:
+          repository: ferrix-os/ferrix
+          path: .ferrix
+          sparse-checkout: tools/common/check
+      - name: No commit carries a Co-authored-by trailer
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            BASE=${{ github.event.pull_request.base.sha }}; HEAD=${{ github.event.pull_request.head.sha }}
+          else
+            BASE=${{ github.event.before }}; HEAD=${{ github.sha }}
+          fi
+          case "$BASE" in 0000000000000000000000000000000000000000|"") BASE=$(git rev-list --max-parents=0 HEAD | tail -1) ;; esac
+          python3 .ferrix/tools/common/check/check-commit-authors.py "$BASE" "$HEAD"
+
+  check:
+    name: formatting, clippy and host tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: ferrix-os/ferrix
+          ref: develop
+          sparse-checkout: |
+            src/user/system/linux/compositor
+            assets/fonts/inter
+      - uses: actions/checkout@v6
+        with:
+          path: src/user/system/linux/tole
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt, clippy
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src/user/system/linux/tole -> target
+      - name: Formatting
+        working-directory: src/user/system/linux/tole
+        run: cargo fmt --check
+      - name: Clippy
+        working-directory: src/user/system/linux/tole
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Tests
+        working-directory: src/user/system/linux/tole
+        run: cargo test

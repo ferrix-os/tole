@@ -1,0 +1,7 @@
+# Unwrapping, panicking and indexing are denied in tole's code (the
+# workspace's lints) and allowed in tests, where a failed assertion should
+# panic: Ferrix's own clippy.toml says the same.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
