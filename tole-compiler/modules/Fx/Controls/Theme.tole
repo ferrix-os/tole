@@ -9,7 +9,7 @@ singleton Theme {
     // Surfaces, from the window's ground up.
     property color bg: dark ? "#1c1d21" : "#ffffff"
     property color bg2: dark ? "#17181b" : "#fafaf8"
-    property color bg3: dark ? "#23242a" : "#f4f4f2"
+    property color bg3: dark ? "#232429" : "#f4f4f2"
     property color hover: dark ? "#2a2c31" : "#efefeb"
     property color fill: dark ? #ffffff12 : #0000000f
 
@@ -30,6 +30,8 @@ singleton Theme {
     // The accent and the states.
     property color accent: dark ? "#7ea6f5" : "#2a62c9"
     property color accentBg: dark ? #7ea6f529 : #2a62c91a
+    // The accent's tint over the window's ground, opaque.
+    property color accentOver: dark ? "#2c3343" : "#e9eff9"
     property color onAccent: dark ? "#141518" : "#ffffff"
     property color red: "#d2382b"
     property color redInk: dark ? "#ff7b6e" : "#c02c20"
@@ -37,7 +39,11 @@ singleton Theme {
     property color amber: "#e9a91c"
     property color amberInk: dark ? "#f0b93a" : "#7a5800"
     property color amberBg: dark ? "#352c1b" : "#fdf6e3"
+    property color amberLine: dark ? "#6b5420" : "#efd68f"
+    property color amberEdge: "#c99000"
     property color green: "#2fa35a"
+    // Something switched off, or not running.
+    property color idle: "#9a9a94"
 
     // Shapes and room.
     property real radius: 6

@@ -69,6 +69,9 @@ pub struct RectangleProps {
     pub border_width: Prop<f32>,
     /// The border's colour.
     pub border_color: Prop<Color>,
+    /// The border's dashes and gaps, this long each; 0 for a solid
+    /// border.
+    pub border_dash: Prop<f32>,
 }
 
 /// A `Text`'s own properties.
@@ -535,6 +538,7 @@ impl Ui {
                 radius: self.prop(0.0_f32),
                 border_width: self.prop(0.0_f32),
                 border_color: self.prop(Color::hex(0)),
+                border_dash: self.prop(0.0_f32),
             }),
             KindName::Text => {
                 let props = TextProps {
@@ -1059,6 +1063,7 @@ fn props_of(data: &ItemData) -> Vec<crate::ui::PropId> {
             p.radius.id,
             p.border_width.id,
             p.border_color.id,
+            p.border_dash.id,
         ]),
         Kind::Text(p) => ids.extend([
             p.text.id,

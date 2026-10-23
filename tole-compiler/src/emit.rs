@@ -3159,13 +3159,15 @@ impl Program {
                                 | "startX"
                                 | "startY"
                                 | "closed"
+                                | "capStyle"
+                                | "joinStyle"
                         )
                     )
                 {
                     return Err(diag(
                         file,
                         p.first().map_or(expr.pos(), |i| i.pos),
-                        "a `ShapePath` has `strokeColor`, `fillColor`, `strokeWidth`, `startX`, `startY` and `closed`",
+                        "a `ShapePath` has `strokeColor`, `fillColor`, `strokeWidth`, `capStyle`, `joinStyle`, `startX`, `startY` and `closed`",
                     ));
                 }
             }
@@ -3190,6 +3192,12 @@ impl Program {
                         real("x")?,
                         real("y")?
                     ),
+                    "PathCircle" => format!(
+                        "path.circle({}, {}, {})",
+                        real("centerX")?,
+                        real("centerY")?,
+                        real("radius")?
+                    ),
                     "PathCubic" => format!(
                         "path.cubic_to(({}, {}), ({}, {}), {}, {})",
                         real("control1X")?,
@@ -3203,12 +3211,18 @@ impl Program {
                         return Err(diag(
                             file,
                             step.kind.pos,
-                            "a `ShapePath` holds `PathMove`, `PathLine`, `PathQuad` and `PathCubic`",
+                            "a `ShapePath` holds `PathMove`, `PathLine`, `PathQuad`, `PathCubic` and `PathCircle`",
                         ));
                     }
                 };
                 let _ = write!(body, "let _ = {call}; ");
             }
+            let _ = write!(
+                body,
+                "let _ = path.set_style(::tole::shape_style({}, {})); ",
+                value("capStyle", path, Ty::Int, "2_i32")?,
+                value("joinStyle", path, Ty::Int, "128_i32")?
+            );
             let _ = write!(
                 body,
                 "if {} {{ let _ = path.close(); }} paths.push(::tole::ShapePathValue {{ path, fill: {}, stroke: {}, width: {} }}); }} ",

@@ -187,10 +187,17 @@ impl Renderer for CpuRenderer<'_, '_> {
         self.draw_path(&path, &paint(color, radius > 0.0), None, masked);
     }
 
-    fn stroke(&mut self, rect: Rect, radius: f32, width: f32, color: Color) {
+    fn stroke(&mut self, rect: Rect, radius: f32, width: f32, color: Color, dash: f32) {
         let half = width / 2.0;
         let inner = Rect::new(rect.x + half, rect.y + half, rect.w - width, rect.h - width);
-        let Some(path) = self.rounded(inner, (radius - half).max(0.0)) else {
+        // A dashed edge keeps the corners' radius, so its dashes fall where
+        // the lode viewer's always did.
+        let corner = if dash > 0.0 {
+            radius
+        } else {
+            (radius - half).max(0.0)
+        };
+        let Some(path) = self.rounded(inner, corner) else {
             return;
         };
         let Some(masked) = self.prepare_mask(rect) else {
@@ -198,6 +205,11 @@ impl Renderer for CpuRenderer<'_, '_> {
         };
         let stroke = Stroke {
             width: width * self.scale,
+            dash: (dash > 0.0)
+                .then(|| {
+                    tiny_skia::StrokeDash::new(vec![dash * self.scale, dash * self.scale], 0.0)
+                })
+                .flatten(),
             ..Stroke::default()
         };
         self.draw_path(&path, &paint(color, true), Some(&stroke), masked);
@@ -245,6 +257,7 @@ impl Renderer for CpuRenderer<'_, '_> {
                     builder.cubic_to(a * s, b * s, c * s, d * s, x * s, y * s);
                 }
                 PathCmd::Close => builder.close(),
+                PathCmd::Circle(x, y, r) => builder.push_circle(x * s, y * s, r * s),
             }
         }
         let Some(skia_path) = builder.finish() else {
@@ -254,10 +267,22 @@ impl Renderer for CpuRenderer<'_, '_> {
             self.draw_path(&skia_path, &paint(fill, true), None, masked);
         }
         if !stroke.is_transparent() && width > 0.0 {
+            let style = path.style();
             let line = Stroke {
                 width: width * s,
-                line_join: tiny_skia::LineJoin::Round,
-                line_cap: tiny_skia::LineCap::Round,
+                line_join: if style.miter {
+                    tiny_skia::LineJoin::Miter
+                } else {
+                    tiny_skia::LineJoin::Round
+                },
+                line_cap: match style.cap {
+                    crate::shape::LineCap::Butt => tiny_skia::LineCap::Butt,
+                    crate::shape::LineCap::Round => tiny_skia::LineCap::Round,
+                    crate::shape::LineCap::Square => tiny_skia::LineCap::Square,
+                },
+                dash: (style.dash > 0.0)
+                    .then(|| tiny_skia::StrokeDash::new(vec![style.dash * s, style.dash * s], 0.0))
+                    .flatten(),
                 ..Stroke::default()
             };
             self.draw_path(&skia_path, &paint(stroke, true), Some(&line), masked);

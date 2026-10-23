@@ -89,6 +89,8 @@ pub enum DrawOp {
         width: f32,
         /// The colour.
         color: Color,
+        /// Dashes and gaps this long each; 0 for a solid line.
+        dash: f32,
     },
     /// A shaped run, its pen at (`x`, `baseline`) in buffer pixels, as
     /// the run is.
@@ -128,7 +130,7 @@ pub trait Renderer {
     /// A rectangle filled, its corners rounded by `radius`.
     fn fill(&mut self, rect: Rect, radius: f32, color: Color);
     /// A rectangle's outline, `width` wide inside its edge.
-    fn stroke(&mut self, rect: Rect, radius: f32, width: f32, color: Color);
+    fn stroke(&mut self, rect: Rect, radius: f32, width: f32, color: Color, dash: f32);
     /// A run, its pen at (`x`, `baseline`) in buffer pixels.
     fn text(&mut self, run: &Run, x: f32, baseline: f32, color: Color);
     /// A path filled with `fill` and stroked `width` wide with `stroke`.
@@ -157,7 +159,8 @@ pub fn play(ops: &[DrawOp], renderer: &mut dyn Renderer) {
                 radius,
                 width,
                 color,
-            } => renderer.stroke(*rect, *radius, *width, *color),
+                dash,
+            } => renderer.stroke(*rect, *radius, *width, *color, *dash),
             DrawOp::Text {
                 run,
                 x,
@@ -249,6 +252,7 @@ impl Ui {
                         radius,
                         width,
                         color: border,
+                        dash: self.get(props.border_dash),
                     });
                 }
             }

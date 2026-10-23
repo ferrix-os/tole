@@ -918,8 +918,18 @@ alone are drawn and handed to the compositor. A test holds the kept
 frame to what drawing the whole scene gives, pixel for pixel, as a
 rounded box wanders at scales 1, 1.5 and 2.
 
-More come as the framework reaches them: the lode viewer ported onto
-tole.
+### The lode viewer
+
+Ferrix's log viewer (`lode-viewer`, in Ferrix's apps) is a tole program:
+its header, sidebar, pages, forms and menus are `.tole` files, its
+charts and swim lanes Rust painters, and its table a `ListView` over a
+Rust model of the log, made only for the rows in view, so a hundred
+thousand records scroll as a screenful does. Ported from its own
+immediate drawing, it draws the same pixels as before, but for the
+antialiasing of a few edges. Here, Logs with a query and a record open,
+drawn by its `--render`:
+
+![the lode viewer](docs/screenshots/lode-viewer.png)
 
 ## Crates
 

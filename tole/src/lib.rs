@@ -59,7 +59,10 @@ pub use model::{AnyModel, Change, Model, ModelRc, ModelSource, ModelTracker, Vec
 pub use popup::close_policy;
 pub use render::{DrawOp, Rect, Renderer, play};
 pub use repeater::{Delegate, DelegateFactory};
-pub use shape::{CanvasPainter, Painter, Path, PathCmd, ShapePathValue, ShapePaths};
+pub use shape::{
+    CanvasPainter, LineCap, LineStyle, Painter, Path, PathCmd, ShapePathValue, ShapePaths,
+    shape_style,
+};
 pub use signal::{Emitted, Handler, SignalId};
 pub use textinput::{echo, wrap};
 pub use ui::{Effect, Prop, PropId, Ui};

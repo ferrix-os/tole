@@ -225,9 +225,21 @@ impl Ui {
 
     /// Paste `text` where a paste was asked for, if anywhere; an empty
     /// one (the desktop's clipboard held no text) only ends the request.
+    /// A one-line field takes the first line that is not blank.
     pub fn paste(&mut self, text: &str) {
         let Some(item) = self.clipboard.paste_into.take() else {
             return;
+        };
+        // One line takes the first line of what was copied that has
+        // anything on it; lines take it whole.
+        let one_line = self.text_input(item).is_some_and(|p| !p.multiline);
+        let text = if one_line {
+            text.lines()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or("")
+                .trim_end_matches('\r')
+        } else {
+            text
         };
         if !text.is_empty() {
             self.insert_typed(item, text);

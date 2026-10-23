@@ -42,6 +42,55 @@ pub struct WindowOptions {
     pub size: (u32, u32),
     /// What shows where nothing is drawn.
     pub background: Color,
+    /// The smallest size it may be made; (0, 0) for any.
+    pub min_size: (u32, u32),
+    /// Whether the window resizes itself from its edges, for a program
+    /// that draws its own frame where the compositor draws none (GNOME's
+    /// mutter): a press within a few pixels of an edge drags it.
+    pub resize_edges: bool,
+    /// Whether the window binds the desktop's clipboard itself
+    /// (`ext_data_control_v1`). A program that keeps its own selections
+    /// says false, and then serves the `Ui`'s copies and pastes itself
+    /// (`Ui::take_copied`, `Ui::take_paste_request`, `Ui::paste`).
+    pub clipboard: bool,
+}
+
+impl Default for WindowOptions {
+    fn default() -> Self {
+        WindowOptions {
+            title: String::new(),
+            app_id: String::new(),
+            size: (800, 600),
+            background: Color::hex(0xff_ff_ff),
+            min_size: (0, 0),
+            resize_edges: false,
+            clipboard: true,
+        }
+    }
+}
+
+/// How close to an edge a press resizes the window, in logical pixels.
+const EDGE: f32 = 6.0;
+
+/// The `xdg_toplevel.resize_edge` at (`x`, `y`) in a window of `size`, 0
+/// for none, and the pointer's shape there (cursor-shape-v1's numbers).
+fn edge_at(x: f32, y: f32, size: (u32, u32)) -> (u32, CursorShape) {
+    let (w, h) = (size.0 as f32, size.1 as f32);
+    let top = y < EDGE;
+    let bottom = y >= h - EDGE;
+    let left = x < EDGE;
+    let right = x >= w - EDGE;
+    match (top, bottom, left, right) {
+        (true, _, true, _) => (5, CursorShape::Other(29)),
+        (true, _, _, true) => (9, CursorShape::Other(28)),
+        (_, true, true, _) => (6, CursorShape::Other(28)),
+        (_, true, _, true) => (10, CursorShape::Other(29)),
+        (true, ..) => (1, CursorShape::Other(27)),
+        (_, true, ..) => (2, CursorShape::Other(27)),
+        (_, _, true, _) => (4, CursorShape::Other(26)),
+        (_, _, _, true) => (8, CursorShape::Other(26)),
+        _ => (0, CursorShape::Default),
+    }
 }
 
 /// A tree in a toplevel.
@@ -71,6 +120,13 @@ pub struct Window {
     opened: std::time::Instant,
     /// The desktop's clipboard, when the compositor offers one.
     clipboard: Option<Clipboard>,
+    /// The edge the pointer is over, as `xdg_toplevel.resize_edge`; 0
+    /// none.
+    edge: u32,
+    /// Whether it was asked to be maximized.
+    maximized: bool,
+    /// The last key press's serial, which a program's own copy names.
+    key_serial: u32,
 }
 
 /// The types text is offered and read as, best first.
@@ -277,9 +333,14 @@ impl Window {
             title: options.title.clone(),
             app_id: options.app_id.clone(),
             size: options.size,
+            min_size: options.min_size,
             ..ToplevelOptions::default()
         })?;
-        let clipboard = Clipboard::bind(&mut client);
+        let clipboard = if options.clipboard {
+            Clipboard::bind(&mut client)
+        } else {
+            None
+        };
         Ok(Window {
             clipboard,
             client,
@@ -293,7 +354,63 @@ impl Window {
             pending: true,
             closed: false,
             opened: std::time::Instant::now(),
+            edge: 0,
+            maximized: false,
+            key_serial: 0,
         })
+    }
+
+    /// Move the window by the pointer, from the press that asked: what a
+    /// press on a program's own title bar does.
+    pub fn start_move(&mut self) {
+        self.client.drag_window(self.surface, 0);
+    }
+
+    /// Maximize it, or give it back its own size.
+    pub fn toggle_maximized(&mut self) {
+        self.maximized = !self.maximized;
+        let state = if self.maximized {
+            compositor_toolkit::WindowState::Maximized
+        } else {
+            compositor_toolkit::WindowState::Restored
+        };
+        self.client.set_window_state(self.surface, state);
+    }
+
+    /// Minimize it.
+    pub fn minimize(&mut self) {
+        self.client
+            .set_window_state(self.surface, compositor_toolkit::WindowState::Minimized);
+    }
+
+    /// The last key press's serial: what a program that keeps its own
+    /// selections names a copy with.
+    #[must_use]
+    pub fn key_serial(&self) -> u32 {
+        self.key_serial
+    }
+
+    /// Its size in logical pixels, once the compositor gave one.
+    #[must_use]
+    pub fn size(&self) -> Option<(u32, u32)> {
+        self.size
+    }
+
+    /// Draw what the program changed in `ui` since the last dispatch,
+    /// without waiting for anything to happen first.
+    ///
+    /// # Errors
+    ///
+    /// The connection failed.
+    pub fn refresh(&mut self, ui: &mut Ui) -> Result<(), Error> {
+        ui.update();
+        if ui.take_changed() {
+            self.pending = true;
+        }
+        if self.pending && !self.awaiting {
+            self.draw(ui)?;
+        }
+        Ok(())
     }
 
     /// The connection, for what the program does with it itself: timers,
@@ -333,7 +450,9 @@ impl Window {
         } else {
             timeout
         };
-        ui.set_clipboard_external(self.clipboard.is_some());
+        if self.options.clipboard {
+            ui.set_clipboard_external(self.clipboard.is_some());
+        }
         let events = self.client.dispatch(timeout)?;
         ui.tick(self.opened.elapsed().as_secs_f64() * 1000.0);
         let mut rest = Vec::new();
@@ -382,13 +501,15 @@ impl Window {
                 other => rest.push(other),
             }
         }
-        // What the text fields asked of the clipboard.
-        if let Some(text) = ui.take_copied()
+        // What the text fields asked of the clipboard, unless the
+        // program serves it itself.
+        if self.options.clipboard
+            && let Some(text) = ui.take_copied()
             && let Some(clipboard) = self.clipboard.as_mut()
         {
             clipboard.copy(&mut self.client, text);
         }
-        if ui.take_paste_request() {
+        if self.options.clipboard && ui.take_paste_request() {
             let text = self
                 .clipboard
                 .as_mut()
@@ -422,7 +543,26 @@ impl Window {
             PointerEvent::Enter { surface, x, y } | PointerEvent::Motion { surface, x, y }
                 if ours(surface) =>
             {
+                if self.options.resize_edges {
+                    let (edge, shape) = if self.maximized {
+                        (0, CursorShape::Default)
+                    } else {
+                        edge_at(x as f32, y as f32, self.size.unwrap_or((1, 1)))
+                    };
+                    if edge != self.edge {
+                        self.edge = edge;
+                        self.client.set_cursor(shape);
+                    }
+                }
                 ui.pointer_move(x as f32, y as f32);
+            }
+            PointerEvent::Button {
+                surface,
+                button,
+                pressed: true,
+                ..
+            } if ours(surface) && button == BUTTON_LEFT && self.edge != 0 => {
+                self.client.drag_window(self.surface, self.edge);
             }
             PointerEvent::Leave { surface } if ours(surface) => ui.pointer_leave(),
             PointerEvent::Button {
@@ -456,6 +596,9 @@ impl Window {
             }
             KeyboardEvent::Modifiers(modifiers) => ui.set_shift(modifiers.shift),
             KeyboardEvent::Key(key) if key.surface.is_none_or(|s| s == self.surface) => {
+                if key.pressed {
+                    self.key_serial = key.serial;
+                }
                 let event = crate::KeyEvent {
                     key: std::rc::Rc::from(key.keysym.unwrap_or("")),
                     text: std::rc::Rc::from(key.text.as_str()),

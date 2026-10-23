@@ -277,7 +277,9 @@ fn update_view(
     let top = f64::from(ui.get(props.flick.content_y) - cache).max(0.0);
     let bottom = f64::from(ui.get(props.flick.content_y) + ui.get(own.height) + cache);
     // Before any row is measured every height is 0: start at the top.
-    let first = if rows_now == 0 || state.estimate.is_none() {
+    // Heights the model gave place the rows already, scrolled anywhere.
+    let placed = state.heights.prefix(rows_now) > 0.0;
+    let first = if rows_now == 0 || (state.estimate.is_none() && !placed) {
         0
     } else {
         state.heights.find(top)

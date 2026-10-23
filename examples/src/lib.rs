@@ -485,6 +485,7 @@ pub fn run_window(demo: &Demo) -> Result<(), String> {
         app_id: "rocks.magical.tole-examples".to_owned(),
         size,
         background: Color::hex(0xff_ff_ff),
+        ..tole::window::WindowOptions::default()
     };
     let mut window =
         tole::window::Window::open(root, options).map_err(|error| error.to_string())?;

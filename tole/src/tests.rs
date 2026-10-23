@@ -1590,8 +1590,12 @@ fn control_never_types_and_the_clipboard_copies_cuts_and_pastes() {
     assert!(ui.key_press(&key_with("v", true, false)));
     assert_eq!(&*ui.get(input.props.text), "key.pemkey.pem");
     assert!(ui.take_paste_request());
-    ui.paste("~/.ssh/id_ed25519\n");
-    assert_eq!(&*ui.get(input.props.text), "~/.ssh/id_ed25519 ", "one line");
+    ui.paste("\n~/.ssh/id_ed25519\nsecond\n");
+    assert_eq!(
+        &*ui.get(input.props.text),
+        "~/.ssh/id_ed25519",
+        "one line: the first that is not blank"
+    );
     assert!(!ui.take_paste_request());
     // A password is not copied.
     let _ = ui.take_copied();
@@ -1748,4 +1752,111 @@ fn a_path_is_bounded_and_drawn() {
     assert_eq!(at(8, 10), 255, "inside the triangle");
     assert_eq!(at(20, 10), 255, "near its tip");
     assert_eq!(at(20, 3), 0, "outside");
+}
+
+#[test]
+fn a_painter_draws_discs_flat_ended_and_dashed_lines_and_cut_text() {
+    let mut ui = ui();
+    let canvas = crate::handles::Canvas::new(&mut ui, None).unwrap();
+    canvas.common.width.set(&mut ui, 60.0);
+    canvas.common.height.set(&mut ui, 40.0);
+    let ink = Color::hex(0x1a1a1a);
+    canvas.props.painter.set(
+        &mut ui,
+        crate::CanvasPainter::new(move |p| {
+            p.circle((10.0, 10.0), 4.0, ink);
+            // Flat ends stop at the points; a dashed line has gaps.
+            p.polyline(
+                &[(20.0, 10.0), (40.0, 10.0)],
+                4.0,
+                ink,
+                crate::LineStyle {
+                    cap: crate::LineCap::Butt,
+                    miter: false,
+                    dash: 0.0,
+                },
+            );
+            p.polyline(
+                &[(0.0, 30.0), (60.0, 30.0)],
+                2.0,
+                ink,
+                crate::LineStyle {
+                    cap: crate::LineCap::Butt,
+                    miter: false,
+                    dash: 4.0,
+                },
+            );
+            p.push_clip(crate::Rect::new(0.0, 0.0, 60.0, 20.0));
+            let drawn = p.text_in(
+                "a long label",
+                &inter(12.0),
+                (0.0, 0.0, 20.0),
+                ink,
+                Some(20.0),
+            );
+            assert!(drawn <= 20.0, "cut to its room: {drawn}");
+            p.pop_clip();
+        }),
+    );
+    let frame = ui.render((60, 40), Color::hex(0xffffff)).unwrap();
+    let dark = |x: u32, y: u32| pixel(&frame, x, y)[0] < 128;
+    assert!(dark(10, 10), "the disc's middle");
+    assert!(!dark(10, 15), "past its radius");
+    assert!(dark(21, 10) && dark(39, 10));
+    assert!(!dark(41, 10), "a flat end stops at its point");
+    let line: Vec<bool> = (0..60).map(|x| dark(x, 30)).collect();
+    assert!(
+        line.iter().any(|d| *d) && line.iter().any(|d| !*d),
+        "dashes and gaps"
+    );
+}
+
+#[test]
+fn a_dashed_border_has_gaps() {
+    let mut ui = ui();
+    let r = crate::handles::Rectangle::new(&mut ui, None).unwrap();
+    r.common.width.set(&mut ui, 40.0);
+    r.common.height.set(&mut ui, 20.0);
+    r.props.border_width.set(&mut ui, 1.0);
+    r.props.border_color.set(&mut ui, Color::hex(0x000000));
+    r.props.border_dash.set(&mut ui, 3.0);
+    let frame = ui.render((40, 20), Color::hex(0xffffff)).unwrap();
+    let top: Vec<bool> = (4..36).map(|x| pixel(&frame, x, 0)[0] < 160).collect();
+    assert!(top.iter().any(|d| *d) && top.iter().any(|d| !*d), "{top:?}");
+}
+
+#[test]
+fn a_list_scrolled_before_it_is_laid_out_makes_only_its_screenful() {
+    // A model that says its heights, scrolled half way before the first
+    // update: the view starts at the row there, not at the top.
+    let mut ui = bare();
+    let view = crate::handles::ListView::new(&mut ui, None).unwrap();
+    view.common.width.set(&mut ui, 200.0);
+    view.common.height.set(&mut ui, 100.0);
+    ui.set_view_delegates(view.id, vec![row_factory(20.0)], None);
+    struct Rows(crate::ModelTracker);
+    impl crate::Model for Rows {
+        type Row = i32;
+        fn row_count(&self) -> usize {
+            100_000
+        }
+        fn row(&self, index: usize) -> Option<i32> {
+            i32::try_from(index).ok()
+        }
+        fn row_height(&self, _index: usize) -> Option<f32> {
+            Some(20.0)
+        }
+        fn tracker(&self) -> &crate::ModelTracker {
+            &self.0
+        }
+    }
+    view.props.model.set(
+        &mut ui,
+        crate::ModelSource::model(crate::ModelRc::new(Rows(crate::ModelTracker::default()))),
+    );
+    view.props.flick.content_y.set(&mut ui, 1_000_000.0);
+    ui.update();
+    let (_, made) = ui.view_delegates(view.id).unwrap();
+    assert!(made <= 8, "{made} made");
+    assert_eq!(shown_rows(&mut ui, view.id).first().unwrap().0, 50_000);
 }

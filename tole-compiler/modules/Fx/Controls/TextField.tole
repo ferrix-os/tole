@@ -10,6 +10,9 @@ component TextField : Rectangle {
     property alias echoMode: input.echoMode
     property alias cursorPosition: input.cursorPosition
     property alias selectedText: input.selectedText
+    property alias font: input.font
+    // Whether its text has the keys.
+    property bool focused: input.activeFocus
     property string placeholderText
     signal accepted()
     signal textEdited()

@@ -33,13 +33,57 @@ pub enum PathCmd {
     Cubic(f32, f32, f32, f32, f32, f32),
     /// Back to the figure's start.
     Close,
+    /// A circle of its own: its centre and radius.
+    Circle(f32, f32, f32),
 }
 
-/// A path: figures of lines and curves.
+/// How a line's ends are drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LineCap {
+    /// Cut square at the end.
+    Butt,
+    /// Rounded past the end by half the width.
+    #[default]
+    Round,
+    /// Squared past the end by half the width.
+    Square,
+}
+
+/// How a stroke is drawn: its ends, and a dash.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LineStyle {
+    /// Its ends.
+    pub cap: LineCap,
+    /// Whether its corners are mitred rather than rounded.
+    pub miter: bool,
+    /// Dashes and gaps this long each, in logical pixels; 0 for a solid
+    /// line.
+    pub dash: f32,
+}
+
+/// A `ShapePath`'s `capStyle` and `joinStyle`, Qt's numbers
+/// (`ShapePath.FlatCap` 0, `SquareCap` 1, `RoundCap` 2; `MiterJoin` 0,
+/// `RoundJoin` 128; a bevel is drawn mitred), as a [`LineStyle`].
+#[must_use]
+pub fn shape_style(cap: i32, join: i32) -> LineStyle {
+    LineStyle {
+        cap: match cap {
+            0 => LineCap::Butt,
+            1 => LineCap::Square,
+            _ => LineCap::Round,
+        },
+        miter: join != 128,
+        dash: 0.0,
+    }
+}
+
+/// A path: figures of lines and curves, and how a stroke of it is drawn.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Path {
     /// Its steps.
     cmds: Vec<PathCmd>,
+    /// How it is stroked.
+    style: LineStyle,
 }
 
 impl Path {
@@ -79,6 +123,41 @@ impl Path {
         self
     }
 
+    /// A circle of its own around (`cx`, `cy`).
+    pub fn circle(&mut self, cx: f32, cy: f32, radius: f32) -> &mut Self {
+        self.cmds.push(PathCmd::Circle(cx, cy, radius));
+        self
+    }
+
+    /// The path through `points`, closed when `closed`.
+    #[must_use]
+    pub fn through(points: &[(f32, f32)], closed: bool) -> Self {
+        let mut path = Path::new();
+        for (i, &(x, y)) in points.iter().enumerate() {
+            let _ = if i == 0 {
+                path.move_to(x, y)
+            } else {
+                path.line_to(x, y)
+            };
+        }
+        if closed && !points.is_empty() {
+            let _ = path.close();
+        }
+        path
+    }
+
+    /// Stroke it so.
+    pub fn set_style(&mut self, style: LineStyle) -> &mut Self {
+        self.style = style;
+        self
+    }
+
+    /// How it is stroked.
+    #[must_use]
+    pub fn style(&self) -> LineStyle {
+        self.style
+    }
+
     /// Its steps.
     #[must_use]
     pub fn cmds(&self) -> &[PathCmd] {
@@ -105,9 +184,13 @@ impl Path {
                     PathCmd::Cubic(a + dx, b + dy, c + dx, d + dy, x + dx, y + dy)
                 }
                 PathCmd::Close => PathCmd::Close,
+                PathCmd::Circle(x, y, r) => PathCmd::Circle(x + dx, y + dy, r),
             })
             .collect();
-        Path { cmds }
+        Path {
+            cmds,
+            style: self.style,
+        }
     }
 
     /// The smallest rectangle holding every point of it, control points
@@ -120,6 +203,7 @@ impl Path {
                 PathCmd::Move(x, y) | PathCmd::Line(x, y) => points.push((x, y)),
                 PathCmd::Quad(cx, cy, x, y) => points.extend([(cx, cy), (x, y)]),
                 PathCmd::Cubic(a, b, c, d, x, y) => points.extend([(a, b), (c, d), (x, y)]),
+                PathCmd::Circle(x, y, r) => points.extend([(x - r, y - r), (x + r, y + r)]),
                 PathCmd::Close => {}
             }
         }
@@ -234,6 +318,7 @@ impl Painter<'_> {
                 radius,
                 width,
                 color,
+                dash: 0.0,
             });
         }
     }
@@ -257,6 +342,71 @@ impl Painter<'_> {
         let mut path = Path::new();
         let _ = path.move_to(x0, y0).line_to(x1, y1);
         self.path(&path, Color::TRANSPARENT, color, width);
+    }
+
+    /// The line through `points`, `width` wide, drawn `style`.
+    pub fn polyline(&mut self, points: &[(f32, f32)], width: f32, color: Color, style: LineStyle) {
+        let mut path = Path::through(points, false);
+        let _ = path.set_style(style);
+        self.path(&path, Color::TRANSPARENT, color, width);
+    }
+
+    /// The polygon of `points`, filled.
+    pub fn polygon(&mut self, points: &[(f32, f32)], color: Color) {
+        self.path(&Path::through(points, true), color, Color::TRANSPARENT, 0.0);
+    }
+
+    /// A disc of `radius` around (`cx`, `cy`).
+    pub fn circle(&mut self, (cx, cy): (f32, f32), radius: f32, color: Color) {
+        let mut path = Path::new();
+        let _ = path.circle(cx, cy, radius);
+        self.path(&path, color, Color::TRANSPARENT, 0.0);
+    }
+
+    /// Cut what is painted next to `rect`, until [`Painter::pop_clip`].
+    pub fn push_clip(&mut self, rect: Rect) {
+        let rect = self.place(rect);
+        self.ops.push(DrawOp::PushClip(rect));
+    }
+
+    /// End the last cut.
+    pub fn pop_clip(&mut self) {
+        self.ops.push(DrawOp::PopClip);
+    }
+
+    /// `text` in `font` on a line `height` tall whose top is `y`, centred
+    /// down it as a `Text` is, from `x`; cut with `…` to `max` wide when
+    /// given. Answers the width drawn.
+    pub fn text_in(
+        &mut self,
+        text: &str,
+        font: &Font,
+        (x, y, height): (f32, f32, f32),
+        color: Color,
+        max: Option<f32>,
+    ) -> f32 {
+        if text.is_empty() {
+            return 0.0;
+        }
+        let s = self.scale;
+        let text: Rc<str> = Rc::from(text);
+        let run = match max {
+            Some(max) => self.text.run_within(font, s, &text, max * s),
+            None => self.text.run(font, s, &text),
+        };
+        let width = run.width / s;
+        if color.is_transparent() {
+            return width;
+        }
+        let top = (self.origin.1 + y) * s;
+        let baseline = top + (height * s - (run.ascent + run.descent)) / 2.0 + run.ascent;
+        self.ops.push(DrawOp::Text {
+            run,
+            x: ((self.origin.0 + x) * s).round(),
+            baseline: baseline.round(),
+            color,
+        });
+        width
     }
 
     /// How wide `text` is in `font`.

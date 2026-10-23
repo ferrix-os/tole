@@ -9,8 +9,12 @@ component TextArea : Rectangle {
     property alias text: edit.text
     property alias readOnly: edit.readOnly
     property alias wrapMode: edit.wrapMode
+    property alias echoMode: edit.echoMode
     property alias cursorPosition: edit.cursorPosition
     property alias selectedText: edit.selectedText
+    property alias font: edit.font
+    // Whether its text has the keys.
+    property bool focused: edit.activeFocus
     property string placeholderText
     signal textEdited()
 

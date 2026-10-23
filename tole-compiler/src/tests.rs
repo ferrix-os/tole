@@ -739,3 +739,33 @@ component P : Item {
         "1:23: a `Shape` holds `ShapePath`s"
     );
 }
+
+#[test]
+fn shapes_take_circles_and_line_ends_and_borders_dashes() {
+    let rust = accepted(
+        r#"
+component P : Item {
+    Rectangle { border.width: 1; border.dash: 3 }
+    Shape {
+        ShapePath {
+            strokeColor: "black"
+            capStyle: ShapePath.FlatCap
+            joinStyle: ShapePath.MiterJoin
+            PathLine { x: 10; y: 10 }
+        }
+        ShapePath {
+            fillColor: "red"
+            PathCircle { centerX: 5; centerY: 6; radius: 4 }
+        }
+    }
+}
+"#,
+    );
+    assert!(rust.contains(".props.border_dash"), "{rust}");
+    assert!(rust.contains("::tole::shape_style("), "{rust}");
+    assert!(rust.contains("path.circle("), "{rust}");
+    assert!(
+        refused("component P : Shape { ShapePath { dashes: 1 } }").contains("`capStyle`"),
+        "the error names what a ShapePath has"
+    );
+}
