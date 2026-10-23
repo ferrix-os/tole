@@ -37,9 +37,9 @@ pub(crate) enum StrPiece {
 }
 
 /// Operators and punctuation, longest first.
-const PUNCTS: [&str; 30] = [
+const PUNCTS: [&str; 31] = [
     "===", "!==", "=>", "==", "!=", "<=", ">=", "&&", "||", "{", "}", "(", ")", "[", "]", ":", ";",
-    ",", ".", "?", "+", "-", "*", "/", "%", "<", ">", "!", "=", "@",
+    ",", ".", "?", "+", "-", "*", "/", "%", "<", ">", "!", "=", "@", "|",
 ];
 
 /// `source`'s tokens, each with where it starts.

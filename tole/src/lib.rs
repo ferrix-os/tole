@@ -21,8 +21,11 @@ pub mod handles;
 mod input;
 mod item;
 mod layout;
+mod layouts;
+mod model;
 pub mod png;
 mod render;
+mod repeater;
 mod signal;
 mod text;
 mod ui;
@@ -34,12 +37,16 @@ pub use cpu::CpuRenderer;
 pub use focus::{KeyEvent, Nav};
 pub use handles::Element;
 pub use item::{
-    Common, ItemId, Kind, KindName, MouseAreaProps, PositionerProps, RectangleProps, TextProps,
+    Common, FlowProps, GridProps, ItemId, Kind, KindName, MouseAreaProps, PositionerProps,
+    RectangleProps, RepeaterProps, TextProps,
 };
 pub use layout::{Anchors, Line};
+pub use layouts::{LayoutProps, Solved, align};
+pub use model::{AnyModel, Change, Model, ModelRc, ModelSource, ModelTracker, VecModel};
 pub use render::{DrawOp, Rect, Renderer, play};
+pub use repeater::{Delegate, DelegateFactory};
 pub use signal::{Emitted, Handler, SignalId};
-pub use ui::{Prop, PropId, Ui};
+pub use ui::{Effect, Prop, PropId, Ui};
 pub use value::{Color, CustomValue, Elide, Font, HAlign, PropType, VAlign, Value};
 
 /// The Rust the compiler generated from the program's `.tole` files

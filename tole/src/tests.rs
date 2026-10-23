@@ -964,3 +964,208 @@ fn tab_walks_the_stops_in_tree_order_and_key_navigation_jumps() {
     assert_eq!(ui.active_focus_item(), Some(a.id));
     assert!(!ui.key_press(&crate::KeyEvent::named("Up")), "a has none");
 }
+
+/// A rectangle under `parent` asking for `w` × `h`.
+fn sized(ui: &mut Ui, parent: crate::ItemId, w: f32, h: f32) -> crate::handles::Rectangle {
+    let r = crate::handles::Rectangle::new(ui, Some(parent)).unwrap();
+    r.common.implicit_width.set(ui, w);
+    r.common.implicit_height.set(ui, h);
+    r
+}
+
+/// Where `item` is, from its parent, and its size.
+fn geometry(ui: &mut Ui, common: crate::Common) -> (f32, f32, f32, f32) {
+    (
+        ui.get(common.x),
+        ui.get(common.y),
+        ui.get(common.width),
+        ui.get(common.height),
+    )
+}
+
+#[test]
+fn a_row_layout_shares_its_width_as_qt_quick_layouts_do() {
+    let mut ui = bare();
+    let row = crate::handles::RowLayout::new(&mut ui, None).unwrap();
+    let fixed = sized(&mut ui, row.id, 50.0, 20.0);
+    let fill = sized(&mut ui, row.id, 0.0, 20.0);
+    let capped = sized(&mut ui, row.id, 0.0, 20.0);
+    let l = ui.layout_of(fill.id).unwrap();
+    l.fill_width.set(&mut ui, true);
+    l.fill_height.set(&mut ui, true);
+    let l = ui.layout_of(capped.id).unwrap();
+    l.fill_width.set(&mut ui, true);
+    l.maximum_width.set(&mut ui, 40.0);
+    l.alignment.set(&mut ui, crate::align::BOTTOM);
+    // Measured: the preferred widths and the spacing; the tallest child.
+    assert_eq!(ui.get(row.common.implicit_width), 60.0);
+    assert_eq!(ui.get(row.common.implicit_height), 20.0);
+    row.common.width.set(&mut ui, 300.0);
+    row.common.height.set(&mut ui, 100.0);
+    assert_eq!(
+        geometry(&mut ui, fixed.common),
+        (0.0, 40.0, 50.0, 20.0),
+        "centred down"
+    );
+    assert_eq!(
+        geometry(&mut ui, fill.common),
+        (55.0, 0.0, 200.0, 100.0),
+        "the rest, both ways"
+    );
+    assert_eq!(
+        geometry(&mut ui, capped.common),
+        (260.0, 80.0, 40.0, 20.0),
+        "its maximum, at the bottom"
+    );
+    // Short of room, the fillers give it up first, down to their minimum.
+    row.common.width.set(&mut ui, 60.0);
+    assert_eq!(ui.get(fill.common.width), 0.0);
+    assert_eq!(ui.get(fixed.common.width), 50.0);
+    // A hidden child takes no room.
+    fixed.common.visible.set(&mut ui, false);
+    row.common.width.set(&mut ui, 300.0);
+    assert_eq!(geometry(&mut ui, fill.common).0, 0.0);
+}
+
+#[test]
+fn a_column_layout_with_margins_and_preferred_sizes() {
+    let mut ui = bare();
+    let column = crate::handles::ColumnLayout::new(&mut ui, None).unwrap();
+    column.props.spacing.set(&mut ui, 10.0);
+    let a = sized(&mut ui, column.id, 30.0, 20.0);
+    let b = sized(&mut ui, column.id, 30.0, 20.0);
+    let l = ui.layout_of(b.id).unwrap();
+    l.preferred_height.set(&mut ui, 50.0);
+    l.margins.set(&mut ui, 4.0);
+    l.fill_width.set(&mut ui, true);
+    assert_eq!(ui.get(column.common.implicit_height), 20.0 + 10.0 + 58.0);
+    assert_eq!(ui.get(column.common.implicit_width), 38.0);
+    column.common.width.set(&mut ui, 100.0);
+    assert_eq!(geometry(&mut ui, a.common), (0.0, 0.0, 30.0, 20.0));
+    assert_eq!(geometry(&mut ui, b.common), (4.0, 34.0, 92.0, 50.0));
+}
+
+#[test]
+fn grids_and_a_flow_place_in_cells_and_wrap() {
+    let mut ui = bare();
+    let grid = crate::handles::Grid::new(&mut ui, None).unwrap();
+    grid.props.columns.set(&mut ui, 2);
+    grid.props.spacing.set(&mut ui, 2.0);
+    let cells: Vec<_> = [(10.0, 5.0), (20.0, 8.0), (15.0, 4.0)]
+        .iter()
+        .map(|&(w, h)| sized(&mut ui, grid.id, w, h))
+        .collect();
+    let places: Vec<(f32, f32)> = cells
+        .iter()
+        .map(|c| (ui.get(c.common.x), ui.get(c.common.y)))
+        .collect();
+    assert_eq!(places, [(0.0, 0.0), (17.0, 0.0), (0.0, 10.0)]);
+    assert_eq!(ui.get(grid.common.implicit_width), 37.0);
+    assert_eq!(ui.get(grid.common.implicit_height), 14.0);
+
+    let layout = crate::handles::GridLayout::new(&mut ui, None).unwrap();
+    layout.props.columns.set(&mut ui, 2);
+    layout.props.spacing.set(&mut ui, 0.0);
+    let label = sized(&mut ui, layout.id, 40.0, 10.0);
+    let field = sized(&mut ui, layout.id, 10.0, 10.0);
+    ui.layout_of(field.id)
+        .unwrap()
+        .fill_width
+        .set(&mut ui, true);
+    layout.common.width.set(&mut ui, 200.0);
+    assert_eq!(geometry(&mut ui, label.common).2, 40.0);
+    assert_eq!(geometry(&mut ui, field.common), (40.0, 0.0, 160.0, 10.0));
+
+    let flow = crate::handles::Flow::new(&mut ui, None).unwrap();
+    flow.props.spacing.set(&mut ui, 5.0);
+    let chips: Vec<_> = (0..4)
+        .map(|_| sized(&mut ui, flow.id, 30.0, 10.0))
+        .collect();
+    flow.common.width.set(&mut ui, 70.0);
+    let places: Vec<(f32, f32)> = chips
+        .iter()
+        .map(|c| (ui.get(c.common.x), ui.get(c.common.y)))
+        .collect();
+    assert_eq!(places, [(0.0, 0.0), (35.0, 0.0), (0.0, 15.0), (35.0, 15.0)]);
+    assert_eq!(ui.get(flow.common.implicit_height), 25.0);
+}
+
+#[test]
+fn a_repeater_makes_a_delegate_per_row_beside_itself() {
+    let mut ui = bare();
+    let row = crate::handles::Row::new(&mut ui, None).unwrap();
+    let first = sized(&mut ui, row.id, 7.0, 5.0);
+    let repeater = crate::handles::Repeater::new(&mut ui, Some(row.id)).unwrap();
+    let last = sized(&mut ui, row.id, 7.0, 5.0);
+    let made = Rc::new(Cell::new(0));
+    let counter = Rc::clone(&made);
+    ui.set_delegate(
+        repeater.id,
+        Rc::new(move |ui: &mut Ui, parent| {
+            counter.set(counter.get() + 1);
+            let r = crate::handles::Rectangle::new(ui, Some(parent))?;
+            let (row, index) = ui.delegate_cells(r.id);
+            // Each as wide as ten times its row's value.
+            r.common.implicit_width.bind(ui, move |ui| {
+                let value = ui.read(row);
+                let n = match value {
+                    crate::Value::Int(n) => n as f32,
+                    _ => 0.0,
+                };
+                10.0 * n
+            });
+            Some(crate::Delegate {
+                root: r.id,
+                row,
+                index,
+            })
+        }),
+    );
+    repeater
+        .props
+        .model
+        .set(&mut ui, crate::ModelSource::list(vec![1_i32, 2, 3]));
+    ui.update();
+    assert_eq!(ui.get(repeater.props.count), 3);
+    assert_eq!(ui.children(row.id).len(), 6);
+    assert_eq!(ui.children(row.id)[0], first.id);
+    assert_eq!(ui.children(row.id)[1], repeater.id);
+    assert_eq!(
+        ui.children(row.id)[5],
+        last.id,
+        "the delegates go beside it"
+    );
+    assert_eq!(ui.get(last.common.x), 7.0 + 10.0 + 20.0 + 30.0);
+    // The same rows again change nothing; other values reuse the
+    // delegates; fewer rows drop the last.
+    repeater
+        .props
+        .model
+        .set(&mut ui, crate::ModelSource::list(vec![1_i32, 2, 3]));
+    ui.update();
+    repeater
+        .props
+        .model
+        .set(&mut ui, crate::ModelSource::list(vec![4_i32, 1]));
+    ui.update();
+    assert_eq!(made.get(), 3);
+    assert_eq!(ui.get(last.common.x), 7.0 + 40.0 + 10.0);
+    // A program's model: changes are seen at the next update.
+    let model = Rc::new(crate::VecModel::new(vec![1_i32]));
+    let shared: Rc<dyn crate::Model<Row = i32>> = model.clone();
+    repeater.props.model.set(
+        &mut ui,
+        crate::ModelSource::model(crate::ModelRc::from_rc(shared)),
+    );
+    ui.update();
+    assert_eq!(ui.get(repeater.props.count), 1);
+    model.push(5);
+    model.set_row(0, 2);
+    ui.update();
+    assert_eq!(ui.get(repeater.props.count), 2);
+    assert_eq!(ui.get(last.common.x), 7.0 + 20.0 + 50.0);
+    // Destroying the repeater takes its delegates.
+    ui.destroy(repeater.id);
+    assert_eq!(ui.children(row.id), [first.id, last.id]);
+    assert_eq!(ui.get(last.common.x), 7.0);
+}

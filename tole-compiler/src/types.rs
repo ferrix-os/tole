@@ -30,6 +30,13 @@ pub(crate) enum Ty {
     Struct(String),
     /// A key, as `Keys` handlers are given it.
     KeyEvent,
+    /// `list<T>`: a small list of values.
+    List(Box<Ty>),
+    /// `model<T>`: a program's model of rows.
+    Model(Box<Ty>),
+    /// What a `Repeater` or view takes as its `model`: a count, a list or
+    /// a model, made into one when bound.
+    ModelSource,
 }
 
 impl Ty {
@@ -47,6 +54,14 @@ impl Ty {
             "color" => Ty::Color,
             "font" => Ty::Font,
             "KeyEvent" => Ty::KeyEvent,
+            other if other.starts_with("list<") && other.ends_with('>') => {
+                let inner = other.get(5..other.len() - 1)?;
+                Ty::List(Box::new(Ty::named(inner, structs, enums)?))
+            }
+            other if other.starts_with("model<") && other.ends_with('>') => {
+                let inner = other.get(6..other.len() - 1)?;
+                Ty::Model(Box::new(Ty::named(inner, structs, enums)?))
+            }
             other if structs.contains_key(other) => Ty::Struct(other.to_owned()),
             other if enums.contains_key(other) => Ty::Enum(other.to_owned()),
             _ => return None,
@@ -66,6 +81,9 @@ impl Ty {
             Ty::HAlign => "::tole::HAlign".to_owned(),
             Ty::VAlign => "::tole::VAlign".to_owned(),
             Ty::KeyEvent => "::tole::KeyEvent".to_owned(),
+            Ty::List(inner) => format!("::std::vec::Vec<{}>", inner.rust()),
+            Ty::Model(inner) => format!("::tole::ModelRc<{}>", inner.rust()),
+            Ty::ModelSource => "::tole::ModelSource".to_owned(),
             Ty::Enum(name) | Ty::Struct(name) => name.clone(),
         }
     }
@@ -83,6 +101,9 @@ impl Ty {
             Ty::HAlign => "Text.horizontalAlignment".to_owned(),
             Ty::VAlign => "Text.verticalAlignment".to_owned(),
             Ty::KeyEvent => "KeyEvent".to_owned(),
+            Ty::List(inner) => format!("list<{}>", inner.name()),
+            Ty::Model(inner) => format!("model<{}>", inner.name()),
+            Ty::ModelSource => "count, list or model".to_owned(),
             Ty::Enum(name) | Ty::Struct(name) => name.clone(),
         }
     }
@@ -123,6 +144,18 @@ pub(crate) enum Kind {
     MouseArea,
     /// `FocusScope`.
     FocusScope,
+    /// `Grid`.
+    Grid,
+    /// `Flow`.
+    Flow,
+    /// `RowLayout`.
+    RowLayout,
+    /// `ColumnLayout`.
+    ColumnLayout,
+    /// `GridLayout`.
+    GridLayout,
+    /// `Repeater`.
+    Repeater,
 }
 
 impl Kind {
@@ -136,6 +169,12 @@ impl Kind {
             "Column" => Kind::Column,
             "MouseArea" => Kind::MouseArea,
             "FocusScope" => Kind::FocusScope,
+            "Grid" => Kind::Grid,
+            "Flow" => Kind::Flow,
+            "RowLayout" => Kind::RowLayout,
+            "ColumnLayout" => Kind::ColumnLayout,
+            "GridLayout" => Kind::GridLayout,
+            "Repeater" => Kind::Repeater,
             _ => return None,
         })
     }
@@ -150,6 +189,12 @@ impl Kind {
             Kind::Column => "::tole::handles::Column",
             Kind::MouseArea => "::tole::handles::MouseArea",
             Kind::FocusScope => "::tole::handles::FocusScope",
+            Kind::Grid => "::tole::handles::Grid",
+            Kind::Flow => "::tole::handles::Flow",
+            Kind::RowLayout => "::tole::handles::RowLayout",
+            Kind::ColumnLayout => "::tole::handles::ColumnLayout",
+            Kind::GridLayout => "::tole::handles::GridLayout",
+            Kind::Repeater => "::tole::handles::Repeater",
         }
     }
 
@@ -191,6 +236,19 @@ impl Kind {
             (Kind::Text, ["verticalAlignment"]) => Some((".props.vertical_alignment", Ty::VAlign)),
             (Kind::Row | Kind::Column, ["spacing"]) => Some((".props.spacing", Ty::Real)),
             (Kind::Row | Kind::Column, ["padding"]) => Some((".props.padding", Ty::Real)),
+            (Kind::Grid | Kind::GridLayout, ["columns"]) => Some((".props.columns", Ty::Int)),
+            (
+                Kind::Grid | Kind::GridLayout | Kind::Flow | Kind::RowLayout | Kind::ColumnLayout,
+                ["spacing"],
+            ) => Some((".props.spacing", Ty::Real)),
+            (Kind::Grid | Kind::GridLayout, ["rowSpacing"]) => {
+                Some((".props.row_spacing", Ty::Real))
+            }
+            (Kind::Grid | Kind::GridLayout, ["columnSpacing"]) => {
+                Some((".props.column_spacing", Ty::Real))
+            }
+            (Kind::Repeater, ["model"]) => Some((".props.model", Ty::ModelSource)),
+            (Kind::Repeater, ["count"]) => Some((".props.count", Ty::Int)),
             (Kind::MouseArea, ["hoverEnabled"]) => Some((".props.hover_enabled", Ty::Bool)),
             (Kind::MouseArea, ["pressed"]) => Some((".props.pressed", Ty::Bool)),
             (Kind::MouseArea, ["containsMouse"]) => Some((".props.contains_mouse", Ty::Bool)),
@@ -222,6 +280,28 @@ impl Kind {
     pub(crate) fn common_property(path: &[&str]) -> Option<(&'static str, Ty)> {
         Kind::Item.property(path)
     }
+}
+
+/// `Layout.fillWidth` and the rest: the field of `tole::LayoutProps`
+/// and its type.
+pub(crate) fn layout_attached(name: &str) -> Option<(&'static str, Ty)> {
+    Some(match name {
+        "fillWidth" => ("fill_width", Ty::Bool),
+        "fillHeight" => ("fill_height", Ty::Bool),
+        "preferredWidth" => ("preferred_width", Ty::Real),
+        "preferredHeight" => ("preferred_height", Ty::Real),
+        "minimumWidth" => ("minimum_width", Ty::Real),
+        "minimumHeight" => ("minimum_height", Ty::Real),
+        "maximumWidth" => ("maximum_width", Ty::Real),
+        "maximumHeight" => ("maximum_height", Ty::Real),
+        "margins" => ("margins", Ty::Real),
+        "leftMargin" => ("left_margin", Ty::Real),
+        "rightMargin" => ("right_margin", Ty::Real),
+        "topMargin" => ("top_margin", Ty::Real),
+        "bottomMargin" => ("bottom_margin", Ty::Real),
+        "alignment" => ("alignment", Ty::Int),
+        _ => return None,
+    })
 }
 
 /// The keysym a `Keys.on<Key>Pressed` handler is for, as QML names the
@@ -260,6 +340,13 @@ pub(crate) fn builtin_constant(space: &str, name: &str) -> Option<(&'static str,
         ("Text", "AlignTop") => ("::tole::VAlign::Top", Ty::VAlign),
         ("Text", "AlignVCenter") => ("::tole::VAlign::Center", Ty::VAlign),
         ("Text", "AlignBottom") => ("::tole::VAlign::Bottom", Ty::VAlign),
+        ("Qt", "AlignLeft") => ("::tole::align::LEFT", Ty::Int),
+        ("Qt", "AlignRight") => ("::tole::align::RIGHT", Ty::Int),
+        ("Qt", "AlignHCenter") => ("::tole::align::H_CENTER", Ty::Int),
+        ("Qt", "AlignTop") => ("::tole::align::TOP", Ty::Int),
+        ("Qt", "AlignBottom") => ("::tole::align::BOTTOM", Ty::Int),
+        ("Qt", "AlignVCenter") => ("::tole::align::V_CENTER", Ty::Int),
+        ("Qt", "AlignCenter") => ("::tole::align::CENTER", Ty::Int),
         _ => return None,
     })
 }

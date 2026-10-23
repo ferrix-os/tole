@@ -15,7 +15,9 @@
 //! `? :`, enum values, struct fields, built-in and the component's own
 //! functions); grouped properties (`border { width: 1 }`); anchors;
 //! signals and handlers (U3a); focus, `Keys.on...` handlers with their
-//! `event`, `KeyNavigation` and `forceActiveFocus()` (U3c).
+//! `event`, `KeyNavigation` and `forceActiveFocus()` (U3c); `list<T>` and
+//! `model<T>`, list literals and indexing, `Layout.*`, and `Repeater`
+//! delegates with `modelData` and `index` (U4a).
 
 mod emit;
 mod lexer;

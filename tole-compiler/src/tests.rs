@@ -314,3 +314,71 @@ fn bad_focus_and_keys_are_refused() {
         "1:36: `KeyNavigation` has `tab`, `backtab`, `up`, `down`, `left` and `right`"
     );
 }
+
+#[test]
+fn layouts_lists_and_repeaters() {
+    let rust = accepted(
+        "struct Tag { label: string; on: bool }
+        component Chip : Rectangle { property string label; property Tag modelData }
+        component A : Item {
+            property list<Tag> tags
+            property list<string> names: [\"a\", \"b\"]
+            property int first: names.length
+            property string second: names[1]
+            property bool on: tags[0].on
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.preferredWidth: 30; Layout.alignment: Qt.AlignTop | Qt.AlignRight }
+                Repeater { model: tags; Chip { label: modelData.label + \"${index}\" } }
+                Repeater { model: 3; Rectangle { width: index * 10 } }
+            }
+        }",
+    );
+    for want in [
+        "pub tags: ::tole::Prop<::std::vec::Vec<Tag>>,",
+        "::std::vec![::std::rc::Rc::<str>::from(\"a\"), ::std::rc::Rc::<str>::from(\"b\")]",
+        "(i32::try_from((ui.get(this.names)).len()).unwrap_or(i32::MAX))",
+        "let layout_e1 = ui.layout_of(::tole::Element::id(&e1))?;",
+        "::tole::Prop::set(layout_e2.alignment, ui, (::tole::align::TOP | ::tole::align::RIGHT));",
+        "::tole::ModelSource::list(ui.get(this.tags))",
+        "::tole::ModelSource::count(3_i32)",
+        "let row_1 = d1_0.model_data.id;",
+        "let model_data_1: ::tole::Prop<Tag> = ::tole::Prop::from_id(row_1);",
+        "let model_data_1: ::tole::Prop<i32> = ::tole::Prop::from_id(row_1);",
+        "ui.set_delegate(::tole::Element::id(&e3), factory);",
+        "(ui.get(model_data_1)).label",
+        "ui.update();",
+    ] {
+        assert!(rust.contains(want), "{want}\n{rust}");
+    }
+}
+
+#[test]
+fn bad_layouts_and_repeaters_are_refused() {
+    assert_eq!(
+        refused("component A : Item { Layout.fillSideways: true }"),
+        "1:22: `Layout.fillSideways` is not one of `Layout`'s"
+    );
+    assert_eq!(
+        refused("component A : Item { Repeater { model: 2; Item {} Item {} } }"),
+        "1:51: a `Repeater` has one delegate: put the rest inside it"
+    );
+    assert_eq!(
+        refused("component A : Item { Repeater { model: \"x\"; Item {} } }"),
+        "1:33: a count, list or model was expected, and this is a string"
+    );
+    assert_eq!(
+        refused(
+            "component C : Item { property string modelData }\ncomponent A : Item { Repeater { model: 2; C {} } }"
+        ),
+        "2:43: `C`'s `modelData` is a string, and the model's rows here are a int"
+    );
+    assert_eq!(
+        refused("component A : Item { property list<int> n: [1, \"a\"] }"),
+        "1:44: a list's items are of one type"
+    );
+    assert_eq!(
+        refused("component A : Item { property int n: 3[0] }"),
+        "1:39: a int cannot be indexed"
+    );
+}

@@ -251,6 +251,126 @@ component Focus : Rectangle {
 
 ![focus](docs/screenshots/focus.png)
 
+### Layouts and Repeater
+
+Qt Quick Layouts: a `ColumnLayout` holds a heading `RowLayout` (a
+filling `Item` pushes the button right), a `GridLayout` whose fields
+take the width left over, a `Flow` of chips that wraps, and a `Grid`.
+`Layout.fillWidth`, `preferredWidth`, `minimum*`, `maximum*`, the margins
+and `alignment` share the room as Qt shares it. Each way is worked out
+on its own, so a `Flow`'s height can follow the width its layout gives
+it. The chips and swatches are a `Repeater`'s delegates, made from a
+`list<string>` and from a count, with `modelData` and `index`; a
+program's own `model<T>` (`tole::VecModel`, or any `tole::Model`) works
+the same way and is followed as it changes.
+
+```qml
+// Layouts and Repeater: a ColumnLayout holding a heading row, a
+// GridLayout of labelled fields that fill the width, a Flow of chips a
+// Repeater makes from a list, and a Grid of swatches made from a count.
+import Fx
+
+component Field : Rectangle {
+    property string value
+    implicitHeight: 30
+    radius: 6
+    color: "white"
+    border { width: 1; color: "#d6d6d0" }
+    Text {
+        anchors.left: parent.left; anchors.leftMargin: 10
+        anchors.verticalCenter: parent.verticalCenter
+        text: value
+        font: font("Inter", 13, 400)
+        color: "#1a1a1a"
+    }
+}
+
+component Chip : Rectangle {
+    property string label
+    property bool on
+    implicitWidth: caption.implicitWidth + 24
+    implicitHeight: 26
+    radius: 13
+    color: on ? "#2a62c9" : "#ececE8"
+    Text {
+        id: caption
+        anchors.centerIn: parent
+        text: label
+        font: font("Inter", 12, 500)
+        color: on ? "white" : "#1a1a1a"
+    }
+}
+
+component Label : Text {
+    font: font("Inter", 13, 400)
+    color: "#777777"
+}
+
+component Form : Rectangle {
+    width: 520; height: 404
+    color: "#fafaf8"
+
+    ColumnLayout {
+        anchors.fill: parent
+        anchors.margins: 20
+        spacing: 12
+
+        RowLayout {
+            Layout.fillWidth: true
+            Text { text: "Network"; font: font("Inter", 20, 600); color: "#1a1a1a" }
+            Item { Layout.fillWidth: true }
+            Rectangle {
+                implicitWidth: 76; implicitHeight: 30
+                radius: 8
+                color: "#2a62c9"
+                Text { anchors.centerIn: parent; text: "Apply"; color: "white"; font: font("Inter", 13, 600) }
+            }
+        }
+
+        GridLayout {
+            Layout.fillWidth: true
+            columns: 2
+            columnSpacing: 12
+            rowSpacing: 8
+            Label { text: "Name" }
+            Field { Layout.fillWidth: true; value: "home" }
+            Label { text: "Address" }
+            Field { Layout.fillWidth: true; value: "192.168.9.193/24" }
+            Label { text: "Gateway" }
+            Field { Layout.fillWidth: true; value: "192.168.9.1" }
+        }
+
+        Label { text: "Interfaces"; Layout.topMargin: 6 }
+        Flow {
+            Layout.fillWidth: true
+            spacing: 8
+            Repeater {
+                model: ["eth0", "wlan0", "wg0", "docker0", "br-lan", "tailscale0", "virbr0", "lo"]
+                Chip { label: modelData; on: index < 3 }
+            }
+        }
+
+        Label { text: "Accent"; Layout.topMargin: 6 }
+        Grid {
+            columns: 12
+            spacing: 6
+            Repeater {
+                model: 24
+                Rectangle {
+                    width: 30; height: 22
+                    radius: 4
+                    color: rgba(0.10 + index * 0.035, 0.38 + (index % 12) * 0.02, 0.85 - index * 0.025, 1)
+                }
+            }
+        }
+
+        Item { Layout.fillHeight: true }
+    }
+}
+```
+
+![form](docs/screenshots/form.png)
+
 ### In a window
 
 Every demo also runs in a window on the Wayland desktop it is started
@@ -276,8 +396,10 @@ viewer ported onto tole.
 
 * **`tole`**: the runtime. Property cells and bindings with dependency
   tracking, the item tree (`Item`, `Rectangle`, `Text`, `Row`, `Column`,
-  `MouseArea`, `FocusScope`), signals and handlers, the pointer's
-  routing, focus, keys and the Tab order, damage and
+  `MouseArea`, `FocusScope`), `Grid`, `Flow`, `RowLayout`,
+  `ColumnLayout`, `GridLayout` with `Layout.*`, `Repeater` and models,
+  signals and handlers, the pointer's routing, focus, keys and the Tab
+  order, damage and
   partial redraw into a kept `Frame`, the window (`wayland` feature),
   anchors, the scene as drawing operations, the `Renderer` trait and the
   CPU renderer, typed handles for each kind of item, and `include_ui!` for

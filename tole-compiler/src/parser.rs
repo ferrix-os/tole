@@ -127,6 +127,10 @@ pub(crate) enum Expr {
     Ternary(Box<Expr>, Box<Expr>, Box<Expr>, Pos),
     /// `f(a, b)` or `a.f(b)`.
     Call(Vec<Ident>, Vec<Expr>, Pos),
+    /// `[a, b]`.
+    List(Vec<Expr>, Pos),
+    /// `list[i]`, then perhaps `.field`s.
+    Index(Box<Expr>, Box<Expr>, Vec<Ident>, Pos),
 }
 
 /// A part of a string expression.
@@ -150,7 +154,9 @@ impl Expr {
             | Expr::Unary(_, _, pos)
             | Expr::Binary(_, _, _, pos)
             | Expr::Ternary(_, _, _, pos)
-            | Expr::Call(_, _, pos) => *pos,
+            | Expr::Call(_, _, pos)
+            | Expr::List(_, pos)
+            | Expr::Index(_, _, _, pos) => *pos,
             Expr::Path(path) => path
                 .first()
                 .map_or(Pos { line: 0, column: 0 }, |first| first.pos),
@@ -179,9 +185,10 @@ struct Parser<'a> {
 }
 
 /// Binary operators by binding power, loosest first.
-const LEVELS: [&[&str]; 6] = [
+const LEVELS: [&[&str]; 7] = [
     &["||"],
     &["&&"],
+    &["|"],
     &["==", "!=", "===", "!=="],
     &["<", "<=", ">", ">="],
     &["+", "-"],
@@ -271,6 +278,18 @@ impl Parser<'_> {
         }
     }
 
+    /// A type's name: a name, or `list<T>` and `model<T>` as one name.
+    fn type_name(&mut self) -> Result<Ident, Diagnostic> {
+        let mut name = self.ident()?;
+        if matches!(self.peek(), Tok::Punct("<")) {
+            let _ = self.bump();
+            let inner = self.type_name()?;
+            self.expect(">")?;
+            name.text = format!("{}<{}>", name.text, inner.text);
+        }
+        Ok(name)
+    }
+
     /// Whether the next token is the word `word`.
     fn at_word(&self, word: &str) -> bool {
         matches!(self.peek(), Tok::Ident(text) if text == word)
@@ -328,7 +347,7 @@ impl Parser<'_> {
             }
             let field = self.ident()?;
             self.expect(":")?;
-            fields.push((field, self.ident()?));
+            fields.push((field, self.type_name()?));
         }
     }
 
@@ -370,7 +389,7 @@ impl Parser<'_> {
         }
         if self.at_word("property") && matches!(self.peek2(), Tok::Ident(_)) {
             let _ = self.bump();
-            let ty = self.ident()?;
+            let ty = self.type_name()?;
             let name = self.ident()?;
             let init = if self.eat(":") {
                 Some(self.expr()?)
@@ -539,9 +558,9 @@ impl Parser<'_> {
         self.expect("(")?;
         let mut params = Vec::new();
         while !self.eat(")") {
-            let first = self.ident()?;
+            let first = self.type_name()?;
             if self.eat(":") {
-                params.push((first, self.ident()?));
+                params.push((first, self.type_name()?));
             } else {
                 let name = self.ident()?;
                 params.push((name, first));
@@ -625,7 +644,19 @@ impl Parser<'_> {
         if self.eat("!") {
             return Ok(Expr::Unary("!", Box::new(self.unary()?), pos));
         }
-        self.primary()
+        let mut expr = self.primary()?;
+        while matches!(self.peek(), Tok::Punct("[")) {
+            let at = self.pos();
+            let _ = self.bump();
+            let index = self.expr()?;
+            self.expect("]")?;
+            let mut fields = Vec::new();
+            while self.eat(".") {
+                fields.push(self.ident()?);
+            }
+            expr = Expr::Index(Box::new(expr), Box::new(index), fields, at);
+        }
+        Ok(expr)
     }
 
     /// A literal, a path, a call, or a bracketed expression.
@@ -663,6 +694,22 @@ impl Parser<'_> {
                 let inner = self.expr()?;
                 self.expect(")")?;
                 Ok(inner)
+            }
+            Tok::Punct("[") => {
+                let mut items = Vec::new();
+                loop {
+                    self.newlines();
+                    if self.eat("]") {
+                        return Ok(Expr::List(items, pos));
+                    }
+                    items.push(self.expr()?);
+                    self.newlines();
+                    if !self.eat(",") {
+                        self.newlines();
+                        self.expect("]")?;
+                        return Ok(Expr::List(items, pos));
+                    }
+                }
             }
             Tok::Ident(word) if word == "true" || word == "false" => {
                 Ok(Expr::Bool(word == "true", pos))

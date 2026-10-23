@@ -167,6 +167,7 @@ impl Ui {
 
     /// The scene, and which of its operations each item drew.
     pub(crate) fn scene_with_items(&mut self) -> crate::damage::Scene {
+        self.update();
         let mut scene = crate::damage::Scene::default();
         for root in self.roots.clone() {
             self.scene_of(root, (0.0, 0.0), &mut scene);

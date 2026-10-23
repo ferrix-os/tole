@@ -11,7 +11,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 
 use crate::parser::{Decl, Element, Expr, File, Ident, Member, Stmt, StrPart};
-use crate::types::{Kind, Ty, builtin_constant, keys_handler_keysym, named_color, snake};
+use crate::types::{
+    Kind, Ty, builtin_constant, keys_handler_keysym, layout_attached, named_color, snake,
+};
 use crate::{Diagnostic, Pos};
 
 /// What an element is: a kind of item or a component.
@@ -74,6 +76,11 @@ struct Scope<'a> {
     parent: Option<Target>,
     /// A function's parameters.
     params: &'a [(String, Ty)],
+    /// Names a delegate gives (`modelData`, `index`): the name, the Rust
+    /// that reads it, and its type.
+    locals: &'a [(String, String, Ty)],
+    /// How deep in delegates: names the factories' locals apart.
+    depth: usize,
     /// The file, for diagnostics.
     file: &'a str,
 }
@@ -375,11 +382,13 @@ impl Program {
                 current: Some((var.clone(), ty.clone())),
                 parent: parent.clone(),
                 params: &[],
+                locals: &[],
+                depth: 0,
                 file,
             };
             out.push_str(&self.members(&scope, var, ty, element)?);
         }
-        out.push_str("        ::core::option::Option::Some(this)\n    }\n");
+        out.push_str("        ui.update();\n        ::core::option::Option::Some(this)\n    }\n");
         for member in &c.root.members {
             if let Member::Function {
                 name: fname, body, ..
@@ -398,6 +407,8 @@ impl Program {
                     current: None,
                     parent: None,
                     params: &typed,
+                    locals: &[],
+                    depth: 0,
                     file,
                 };
                 let code = self.expr(&scope, body)?;
@@ -495,6 +506,14 @@ impl Program {
             }
         }
         out.push((var.clone(), ty.clone(), element, parent));
+        if ty == ElemTy::Kind(Kind::Repeater) {
+            // Its child is its delegate, made by a factory of its own.
+            return Ok(());
+        }
+        let prefix: String = match var.rfind('_') {
+            Some(at) => var.get(..=at).unwrap_or("e").to_owned(),
+            None => "e".to_owned(),
+        };
         for member in &element.members {
             if let Member::Child(child) = member {
                 let child_ty = match Kind::named(&child.kind.text) {
@@ -525,7 +544,7 @@ impl Program {
                         ));
                     }
                 }
-                let child_var = format!("e{}", out.len());
+                let child_var = format!("{prefix}{}", out.len());
                 self.walk(
                     file,
                     child,
@@ -622,6 +641,8 @@ impl Program {
             current: scope.current.clone(),
             parent: scope.parent.clone(),
             params: &params,
+            locals: scope.locals,
+            depth: scope.depth,
             file,
         };
         if let Some(own) = body.iter().find_map(|statement| match statement {
@@ -687,6 +708,8 @@ impl Program {
             current: scope.current.clone(),
             parent: scope.parent.clone(),
             params: &params,
+            locals: scope.locals,
+            depth: scope.depth,
             file,
         };
         let statements = self.statements(&inner, body)?;
@@ -975,6 +998,33 @@ impl Program {
                     );
                     continue;
                 }
+                Member::Binding { path, expr }
+                    if path.first().is_some_and(|p| p.text == "Layout") =>
+                {
+                    let pos = path.first().map_or(expr.pos(), |p| p.pos);
+                    let found = match path.as_slice() {
+                        [_, name] => layout_attached(&name.text),
+                        _ => None,
+                    };
+                    let Some((field, want)) = found else {
+                        return Err(diag(
+                            file,
+                            pos,
+                            &format!(
+                                "`{}` is not one of `Layout`'s",
+                                path.iter()
+                                    .map(|p| p.text.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(".")
+                            ),
+                        ));
+                    };
+                    let _ = writeln!(
+                        out,
+                        "        let layout_{var} = ui.layout_of(::tole::Element::id(&{var}))?;"
+                    );
+                    ((format!("layout_{var}.{field}"), want), expr, pos)
+                }
                 Member::Binding { path, expr } => {
                     let names: Vec<&str> = path.iter().map(|p| p.text.as_str()).collect();
                     let pos = path.first().map_or(expr.pos(), |p| p.pos);
@@ -985,7 +1035,7 @@ impl Program {
                             &format!("{} has no property `{}`", describe(ty), names.join(".")),
                         )
                     })?;
-                    (found, expr, pos)
+                    ((format!("{var}{}", found.0), found.1), expr, pos)
                 }
                 Member::Property {
                     name,
@@ -999,7 +1049,7 @@ impl Program {
                         .find(|(p, _)| *p == name.text)
                         .map(|(_, t)| t.clone());
                     let Some(ty) = ty else { continue };
-                    ((format!(".{}", snake(&name.text)), ty), expr, name.pos)
+                    ((format!("{var}.{}", snake(&name.text)), ty), expr, name.pos)
                 }
                 Member::Handler {
                     attached,
@@ -1011,11 +1061,10 @@ impl Program {
                 }
                 _ => continue,
             };
-            let ((rust, want), expr, pos) = (target, expr, pos);
+            let ((prop, want), expr, pos) = (target, expr, pos);
             let code = self.expr_want(scope, expr, Some(&want))?;
             let reads = code.reads;
             let text = coerce(file, pos, code, &want)?;
-            let prop = format!("{var}{rust}");
             if reads {
                 let _ = writeln!(
                     out,
@@ -1029,6 +1078,174 @@ impl Program {
         if !anchors.is_empty() {
             out.push_str(&self.anchors(scope, var, &anchors)?);
         }
+        if *ty == ElemTy::Kind(Kind::Repeater) {
+            out.push_str(&self.delegate_factory(scope, var, element)?);
+        }
+        Ok(out)
+    }
+
+    /// A `Repeater`'s delegate, its one child, as a factory: a closure
+    /// making the child's tree under the parent it is given, with
+    /// `modelData` and `index` in its scope.
+    fn delegate_factory(
+        &self,
+        scope: &Scope<'_>,
+        var: &str,
+        element: &Element,
+    ) -> Result<String, Diagnostic> {
+        let file = scope.file;
+        let children: Vec<&Element> = element
+            .members
+            .iter()
+            .filter_map(|m| match m {
+                Member::Child(child) => Some(child),
+                _ => None,
+            })
+            .collect();
+        let delegate = match children.as_slice() {
+            [one] => *one,
+            [] => return Ok(String::new()),
+            [_, second, ..] => {
+                return Err(diag(
+                    file,
+                    second.kind.pos,
+                    "a `Repeater` has one delegate: put the rest inside it",
+                ));
+            }
+        };
+        // The row's type, from what the model is.
+        let row_ty = match element.members.iter().find_map(|m| match m {
+            Member::Binding { path, expr } if matches!(path.as_slice(), [one] if one.text == "model") => {
+                Some(expr)
+            }
+            _ => None,
+        }) {
+            Some(expr) => match self.expr(scope, expr)?.ty {
+                Ty::Int => Ty::Int,
+                Ty::List(inner) | Ty::Model(inner) => *inner,
+                other => {
+                    return Err(diag(
+                        file,
+                        expr.pos(),
+                        &format!("a model is a count, a list or a model, and this is a {}", other.name()),
+                    ));
+                }
+            },
+            None => Ty::Int,
+        };
+        let depth = scope.depth + 1;
+        let root_ty = match Kind::named(&delegate.kind.text) {
+            Some(kind) => ElemTy::Kind(kind),
+            None if self.components.contains_key(&delegate.kind.text) => {
+                ElemTy::Component(delegate.kind.text.clone())
+            }
+            None => {
+                return Err(diag(
+                    file,
+                    delegate.kind.pos,
+                    &format!(
+                        "`{}` is neither a kind of item nor a component",
+                        delegate.kind.text
+                    ),
+                ));
+            }
+        };
+        let mut elements = Vec::new();
+        let mut ids = scope.ids.clone();
+        let root = format!("d{depth}_0");
+        self.walk(
+            file,
+            delegate,
+            root.clone(),
+            root_ty.clone(),
+            scope.parent.clone(),
+            &mut elements,
+            &mut ids,
+        )?;
+        let mut out = String::new();
+        let _ = writeln!(
+            out,
+            "        {{ let factory: ::tole::DelegateFactory = ::std::rc::Rc::new(move |ui: &mut ::tole::Ui, parent: ::tole::ItemId| -> ::core::option::Option<::tole::Delegate> {{"
+        );
+        for (index, (evar, ety, _, parent)) in elements.iter().enumerate() {
+            let parent_id = match (index, parent) {
+                (0, _) => "parent".to_owned(),
+                (_, Some(Target::Static(parent_var, _))) => {
+                    format!("::tole::Element::id(&{parent_var})")
+                }
+                _ => "parent".to_owned(),
+            };
+            let _ = writeln!(
+                out,
+                "        let {evar} = {}::new(ui, ::core::option::Option::Some({parent_id}))?;",
+                Self::handle(ety)
+            );
+        }
+        let _ = writeln!(
+            out,
+            "        let (row_{depth}, index_{depth}) = ui.delegate_cells(::tole::Element::id(&{root}));"
+        );
+        if let ElemTy::Component(name) = &root_ty
+            && let Some(c) = self.components.get(name)
+        {
+            for (prop, pty) in &c.props {
+                let want = match prop.as_str() {
+                    "modelData" => &row_ty,
+                    "index" => &Ty::Int,
+                    _ => continue,
+                };
+                if pty != want {
+                    return Err(diag(
+                        file,
+                        delegate.kind.pos,
+                        &format!(
+                            "`{name}`'s `{prop}` is a {}, and the model's rows here are a {}",
+                            pty.name(),
+                            want.name()
+                        ),
+                    ));
+                }
+                if prop == "modelData" {
+                    let _ = writeln!(out, "        let row_{depth} = {root}.model_data.id;");
+                } else {
+                    let _ = writeln!(out, "        let index_{depth} = {root}.index;");
+                }
+            }
+        }
+        let _ = writeln!(
+            out,
+            "        let model_data_{depth}: ::tole::Prop<{}> = ::tole::Prop::from_id(row_{depth});",
+            row_ty.rust()
+        );
+        let mut locals: Vec<(String, String, Ty)> = scope.locals.to_vec();
+        locals.push((
+            "modelData".to_owned(),
+            format!("ui.get(model_data_{depth})"),
+            row_ty,
+        ));
+        locals.push((
+            "index".to_owned(),
+            format!("ui.get(index_{depth})"),
+            Ty::Int,
+        ));
+        for (evar, ety, el, parent) in &elements {
+            let inner = Scope {
+                component: scope.component,
+                this: scope.this,
+                ids: &ids,
+                current: Some((evar.clone(), ety.clone())),
+                parent: parent.clone(),
+                params: &[],
+                locals: &locals,
+                depth,
+                file,
+            };
+            out.push_str(&self.members(&inner, evar, ety, el)?);
+        }
+        let _ = writeln!(
+            out,
+            "        ::core::option::Option::Some(::tole::Delegate {{ root: ::tole::Element::id(&{root}), row: row_{depth}, index: index_{depth} }})\n        }});\n        ui.set_delegate(::tole::Element::id(&{var}), factory); }}"
+        );
         Ok(out)
     }
 
@@ -1304,6 +1521,57 @@ impl Program {
                 }
             }
             Expr::Call(path, args, pos) => self.call(scope, path, args, *pos)?,
+            Expr::List(items, pos) => {
+                let mut codes = Vec::new();
+                for item in items {
+                    let inner_want = match want {
+                        Some(Ty::List(inner)) => Some(&**inner),
+                        _ => None,
+                    };
+                    codes.push(self.expr_want(scope, item, inner_want)?);
+                }
+                let elem = match (codes.first(), want) {
+                    (Some(first), _) => codes
+                        .iter()
+                        .try_fold(first.ty.clone(), |ty, c| unify(&ty, &c.ty))
+                        .ok_or_else(|| diag(file, *pos, "a list's items are of one type"))?,
+                    (None, Some(Ty::List(inner))) => (**inner).clone(),
+                    (None, _) => {
+                        return Err(diag(file, *pos, "an empty list here has no type"));
+                    }
+                };
+                let reads = codes.iter().any(|c| c.reads);
+                let mut texts = Vec::new();
+                for code in codes {
+                    texts.push(coerce(file, *pos, code, &elem)?);
+                }
+                Code {
+                    text: format!("::std::vec![{}]", texts.join(", ")),
+                    ty: Ty::List(Box::new(elem)),
+                    reads,
+                }
+            }
+            Expr::Index(list, index, fields, pos) => {
+                let list = self.expr(scope, list)?;
+                let Ty::List(elem) = list.ty.clone() else {
+                    return Err(diag(
+                        file,
+                        *pos,
+                        &format!("a {} cannot be indexed", list.ty.name()),
+                    ));
+                };
+                let index = self.expr(scope, index)?;
+                let reads = list.reads || index.reads;
+                let index = coerce(file, *pos, index, &Ty::Int)?;
+                let text = format!(
+                    "({}).get(usize::try_from({index}).unwrap_or(usize::MAX)).cloned().unwrap_or_else(<{} as ::tole::PropType>::fallback)",
+                    list.text,
+                    elem.rust()
+                );
+                let names: Vec<&str> = fields.iter().map(|f| f.text.as_str()).collect();
+                let code = self.fields(file, *pos, text, *elem, &names)?;
+                Code { reads, ..code }
+            }
         })
     }
 
@@ -1320,6 +1588,10 @@ impl Program {
         // A parameter, then its fields.
         if let Some((_, ty)) = scope.params.iter().find(|(p, _)| *p == first.text) {
             return self.fields(file, first.pos, snake(&first.text), ty.clone(), rest);
+        }
+        // A delegate's `modelData` or `index`.
+        if let Some((_, code, ty)) = scope.locals.iter().rev().find(|(n, _, _)| *n == first.text) {
+            return self.fields(file, first.pos, code.clone(), ty.clone(), rest);
         }
         // An enum's value.
         if let (Some(variants), [variant]) = (self.enums.get(&first.text), rest) {
@@ -1461,6 +1733,14 @@ impl Program {
             reads: true,
         };
         for field in fields {
+            if matches!(code.ty, Ty::List(_)) && *field == "length" {
+                code = Code {
+                    text: format!("(i32::try_from(({}).len()).unwrap_or(i32::MAX))", code.text),
+                    ty: Ty::Int,
+                    reads: code.reads,
+                };
+                continue;
+            }
             if let Some((rust, ty)) = code.ty.builtin_field(field) {
                 code = Code {
                     text: format!("({}).{rust}", code.text),
@@ -1740,6 +2020,9 @@ fn coerce(file: &str, pos: Pos, code: Code, want: &Ty) -> Result<String, Diagnos
     match (&code.ty, want) {
         (have, want) if have == want => Ok(code.text),
         (Ty::Int, Ty::Real) => Ok(format!("(({}) as f32)", code.text)),
+        (Ty::Int, Ty::ModelSource) => Ok(format!("::tole::ModelSource::count({})", code.text)),
+        (Ty::List(_), Ty::ModelSource) => Ok(format!("::tole::ModelSource::list({})", code.text)),
+        (Ty::Model(_), Ty::ModelSource) => Ok(format!("::tole::ModelSource::model({})", code.text)),
         _ => Err(diag(
             file,
             pos,
@@ -1813,6 +2096,16 @@ fn binary(file: &str, pos: Pos, op: &str, a: Code, b: Code) -> Result<Code, Diag
             Ok(Code {
                 text: format!("({x} {op} {y})"),
                 ty: Ty::Bool,
+                reads,
+            })
+        }
+        "|" => {
+            if a.ty != Ty::Int || b.ty != Ty::Int {
+                return Err(mismatch(&a, &b));
+            }
+            Ok(Code {
+                text: format!("({} | {})", a.text, b.text),
+                ty: Ty::Int,
                 reads,
             })
         }

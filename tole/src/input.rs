@@ -27,6 +27,7 @@ pub(crate) struct Input {
 impl Ui {
     /// The pointer moved to (`x`, `y`) in the window, logical pixels.
     pub fn pointer_move(&mut self, x: f32, y: f32) {
+        self.update();
         self.input.at = Some((x, y));
         if let Some(grab) = self.input.grab {
             self.follow(grab, x, y);
@@ -36,12 +37,14 @@ impl Ui {
 
     /// The pointer left the window.
     pub fn pointer_leave(&mut self) {
+        self.update();
         self.input.at = None;
         self.rehover();
     }
 
     /// The button went down.
     pub fn pointer_press(&mut self) {
+        self.update();
         let Some((x, y)) = self.input.at else {
             return;
         };
@@ -57,6 +60,7 @@ impl Ui {
 
     /// The button came up.
     pub fn pointer_release(&mut self) {
+        self.update();
         let Some(item) = self.input.grab.take() else {
             return;
         };
@@ -80,6 +84,7 @@ impl Ui {
 
     /// The wheel turned by `dy` logical pixels, positive down.
     pub fn pointer_wheel(&mut self, dy: f32) {
+        self.update();
         let Some((x, y)) = self.input.at else {
             return;
         };

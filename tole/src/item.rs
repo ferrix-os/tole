@@ -95,6 +95,47 @@ pub struct PositionerProps {
     pub padding: Prop<f32>,
 }
 
+/// A `Grid`'s or `GridLayout`'s own properties.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GridProps {
+    /// How many columns: 0 for as many as there are children.
+    pub columns: Prop<i32>,
+    /// Between rows and between columns, unless given apart.
+    pub spacing: Prop<f32>,
+    /// Between rows; below 0 for `spacing`.
+    pub row_spacing: Prop<f32>,
+    /// Between columns; below 0 for `spacing`.
+    pub column_spacing: Prop<f32>,
+    /// Where each child goes across (a `Flow`: both ways), worked out
+    /// together.
+    pub(crate) solve: Prop<crate::layouts::Solved>,
+    /// Where each child goes down, worked out apart from across so a
+    /// child's height may follow its width.
+    pub(crate) cross: Prop<crate::layouts::Solved>,
+}
+
+/// A `Flow`'s, `RowLayout`'s or `ColumnLayout`'s own properties.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FlowProps {
+    /// Between two children.
+    pub spacing: Prop<f32>,
+    /// Where each child goes across (a `Flow`: both ways), worked out
+    /// together.
+    pub(crate) solve: Prop<crate::layouts::Solved>,
+    /// Where each child goes down, worked out apart from across so a
+    /// child's height may follow its width.
+    pub(crate) cross: Prop<crate::layouts::Solved>,
+}
+
+/// A `Repeater`'s own properties.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RepeaterProps {
+    /// What it makes a delegate for each row of.
+    pub model: Prop<crate::model::ModelSource>,
+    /// How many delegates it made.
+    pub count: Prop<i32>,
+}
+
 /// What an item is, with its own properties.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -114,6 +155,19 @@ pub enum Kind {
     /// A `FocusScope`: an `Item` within which one item at a time holds
     /// the focus, kept while the focus is elsewhere.
     FocusScope,
+    /// A `Grid`: its children in cells, row by row.
+    Grid(GridProps),
+    /// A `Flow`: its children side by side, wrapping at its width.
+    Flow(FlowProps),
+    /// A `RowLayout`: its children side by side, sized by `Layout.*`.
+    RowLayout(FlowProps),
+    /// A `ColumnLayout`: the same, down.
+    ColumnLayout(FlowProps),
+    /// A `GridLayout`: in cells, sized by `Layout.*`.
+    GridLayout(GridProps),
+    /// A `Repeater`: a delegate for each row of its model, made beside
+    /// it in its parent.
+    Repeater(RepeaterProps),
 }
 
 /// A `MouseArea`'s own properties and signals.
@@ -162,6 +216,18 @@ pub enum KindName {
     MouseArea,
     /// [`Kind::FocusScope`].
     FocusScope,
+    /// [`Kind::Grid`].
+    Grid,
+    /// [`Kind::Flow`].
+    Flow,
+    /// [`Kind::RowLayout`].
+    RowLayout,
+    /// [`Kind::ColumnLayout`].
+    ColumnLayout,
+    /// [`Kind::GridLayout`].
+    GridLayout,
+    /// [`Kind::Repeater`].
+    Repeater,
 }
 
 /// One item.
@@ -182,6 +248,8 @@ pub(crate) struct ItemData {
     pub(crate) focus_child: Option<ItemId>,
     /// Its `Keys` and `KeyNavigation`, once the markup gave it either.
     pub(crate) keys: Option<Box<crate::focus::KeysAttached>>,
+    /// Its `Layout.*`, once the markup gave any.
+    pub(crate) layout: Option<crate::layouts::LayoutProps>,
 }
 
 /// What an item holds for a component.
@@ -191,6 +259,9 @@ pub(crate) enum Owned {
     Prop(crate::ui::PropId),
     /// A declared signal.
     Signal(crate::signal::SignalId),
+    /// An item it made beside itself (a `Repeater`'s delegates), which
+    /// goes with it.
+    Item(ItemId),
 }
 
 /// A place in the arena.
@@ -232,6 +303,38 @@ impl Ui {
         let kind = match kind {
             KindName::Item => Kind::Item,
             KindName::FocusScope => Kind::FocusScope,
+            KindName::Grid | KindName::GridLayout => {
+                let layout = kind == KindName::GridLayout;
+                let props = GridProps {
+                    columns: self.prop(if layout { 0 } else { 4 }),
+                    spacing: self.prop(if layout { 5.0_f32 } else { 0.0 }),
+                    row_spacing: self.prop(-1.0_f32),
+                    column_spacing: self.prop(-1.0_f32),
+                    solve: self.prop(crate::layouts::Solved::default()),
+                    cross: self.prop(crate::layouts::Solved::default()),
+                };
+                if layout {
+                    Kind::GridLayout(props)
+                } else {
+                    Kind::Grid(props)
+                }
+            }
+            KindName::Flow | KindName::RowLayout | KindName::ColumnLayout => {
+                let props = FlowProps {
+                    spacing: self.prop(if kind == KindName::Flow { 0.0_f32 } else { 5.0 }),
+                    solve: self.prop(crate::layouts::Solved::default()),
+                    cross: self.prop(crate::layouts::Solved::default()),
+                };
+                match kind {
+                    KindName::Flow => Kind::Flow(props),
+                    KindName::RowLayout => Kind::RowLayout(props),
+                    _ => Kind::ColumnLayout(props),
+                }
+            }
+            KindName::Repeater => Kind::Repeater(RepeaterProps {
+                model: self.prop(crate::model::ModelSource::default()),
+                count: self.prop(0_i32),
+            }),
             KindName::Rectangle => Kind::Rectangle(RectangleProps {
                 color: self.prop(Color::hex(0xff_ff_ff)),
                 radius: self.prop(0.0_f32),
@@ -291,6 +394,7 @@ impl Ui {
             owned: Vec::new(),
             focus_child: None,
             keys: None,
+            layout: None,
         };
         let id = self.place(data);
         match parent {
@@ -316,8 +420,23 @@ impl Ui {
         while let Some(&next) = doomed.get(at) {
             if let Some(data) = self.item(next) {
                 doomed.extend(data.children.iter().copied());
+                for owned in &data.owned {
+                    if let Owned::Item(made) = *owned
+                        && !doomed.contains(&made)
+                    {
+                        doomed.push(made);
+                    }
+                }
             }
             at += 1;
+        }
+        let mut parents: Vec<ItemId> = Vec::new();
+        for id in &doomed {
+            if let Some(above) = self.parent(*id)
+                && !parents.contains(&above)
+            {
+                parents.push(above);
+            }
         }
         for id in doomed {
             let Some(data) = self.slot_mut(id).and_then(|slot| {
@@ -333,6 +452,12 @@ impl Ui {
                 match *owned {
                     Owned::Prop(prop) => self.free(prop),
                     Owned::Signal(signal) => self.free_signal(signal),
+                    Owned::Item(_) => {}
+                }
+            }
+            if let Some(layout) = data.layout {
+                for prop in layout.props() {
+                    self.free(prop);
                 }
             }
             if let Kind::MouseArea(m) = data.kind {
@@ -355,14 +480,23 @@ impl Ui {
             self.forget_input(id);
             self.free_items.push(id.index);
         }
-        match parent {
-            Some(parent) => {
-                if let Some(data) = self.item_mut(parent) {
-                    data.children.retain(|&child| child != item);
-                }
-                self.position_children(parent);
+        if parent.is_none() {
+            self.roots.retain(|&root| root != item);
+        }
+        for above in parents {
+            let Some(data) = self.item(above) else {
+                continue;
+            };
+            let kept: Vec<ItemId> = data
+                .children
+                .iter()
+                .copied()
+                .filter(|&child| self.item(child).is_some())
+                .collect();
+            if let Some(data) = self.item_mut(above) {
+                data.children = kept;
             }
-            None => self.roots.retain(|&root| root != item),
+            self.position_children(above);
         }
         self.forget_focus();
     }
@@ -431,6 +565,83 @@ impl Ui {
             None => self.free_signal(signal),
         }
         signal
+    }
+
+    /// A `Grid`'s or `GridLayout`'s own properties.
+    #[must_use]
+    pub fn grid(&self, item: ItemId) -> Option<GridProps> {
+        match self.kind(item)? {
+            Kind::Grid(props) | Kind::GridLayout(props) => Some(props),
+            _ => None,
+        }
+    }
+
+    /// A `Flow`'s, `RowLayout`'s or `ColumnLayout`'s own properties.
+    #[must_use]
+    pub fn flow(&self, item: ItemId) -> Option<FlowProps> {
+        match self.kind(item)? {
+            Kind::Flow(props) | Kind::RowLayout(props) | Kind::ColumnLayout(props) => Some(props),
+            _ => None,
+        }
+    }
+
+    /// A `Repeater`'s own properties.
+    #[must_use]
+    pub fn repeater(&self, item: ItemId) -> Option<RepeaterProps> {
+        match self.kind(item)? {
+            Kind::Repeater(props) => Some(props),
+            _ => None,
+        }
+    }
+
+    /// Make `item` go with `owner` when `owner` is destroyed.
+    pub(crate) fn own_item(&mut self, owner: ItemId, item: ItemId) {
+        if let Some(data) = self.item_mut(owner) {
+            data.owned.push(Owned::Item(item));
+        }
+    }
+
+    /// Put `items`, children of `anchor`'s parent, straight after
+    /// `anchor` in this order, and place them again.
+    pub(crate) fn place_after(&mut self, anchor: ItemId, items: &[ItemId]) {
+        let Some(parent) = self.parent(anchor) else {
+            return;
+        };
+        let Some(data) = self.item_mut(parent) else {
+            return;
+        };
+        let mut rest: Vec<ItemId> = data
+            .children
+            .iter()
+            .copied()
+            .filter(|c| !items.contains(c))
+            .collect();
+        let at = rest
+            .iter()
+            .position(|&c| c == anchor)
+            .map_or(rest.len(), |p| p + 1);
+        let tail = rest.split_off(at);
+        rest.extend_from_slice(items);
+        rest.extend(tail);
+        if data.children == rest {
+            return;
+        }
+        data.children = rest;
+        self.position_children(parent);
+    }
+
+    /// Put `child` at `index` among its parent's children, and place
+    /// them again.
+    pub fn move_child(&mut self, child: ItemId, index: usize) {
+        let Some(parent) = self.parent(child) else {
+            return;
+        };
+        if let Some(data) = self.item_mut(parent) {
+            data.children.retain(|&c| c != child);
+            let at = index.min(data.children.len());
+            data.children.insert(at, child);
+        }
+        self.position_children(parent);
     }
 
     /// A `Row`'s or `Column`'s own properties.
@@ -541,6 +752,18 @@ fn props_of(data: &ItemData) -> Vec<crate::ui::PropId> {
             p.vertical_alignment.id,
         ]),
         Kind::Row(p) | Kind::Column(p) => ids.extend([p.spacing.id, p.padding.id]),
+        Kind::Grid(p) | Kind::GridLayout(p) => ids.extend([
+            p.columns.id,
+            p.spacing.id,
+            p.row_spacing.id,
+            p.column_spacing.id,
+            p.solve.id,
+            p.cross.id,
+        ]),
+        Kind::Flow(p) | Kind::RowLayout(p) | Kind::ColumnLayout(p) => {
+            ids.extend([p.spacing.id, p.solve.id, p.cross.id]);
+        }
+        Kind::Repeater(p) => ids.extend([p.model.id, p.count.id]),
         Kind::MouseArea(p) => ids.extend([
             p.hover_enabled.id,
             p.pressed.id,

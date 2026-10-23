@@ -57,6 +57,16 @@ impl<T> PartialEq for Prop<T> {
 impl<T> Eq for Prop<T> {}
 
 impl<T: PropType> Prop<T> {
+    /// The cell `id`, read as a `T`: for code that knows the cell's type
+    /// better than its id says (a delegate's `modelData`).
+    #[must_use]
+    pub fn from_id(id: PropId) -> Self {
+        Prop {
+            id,
+            marker: PhantomData,
+        }
+    }
+
     /// Its value, recorded as read by the binding running now.
     pub fn get(self, ui: &mut Ui) -> T {
         ui.get(self)
@@ -136,7 +146,17 @@ pub struct Ui {
     pub(crate) input: crate::input::Input,
     /// Which items have the focus.
     pub(crate) focus: crate::focus::Focus,
+    /// What [`Ui::update`] runs: each with the item it is for, and run
+    /// while that item lives.
+    effects: Vec<(ItemId, Effect)>,
+    /// Whether [`Ui::update`] is running.
+    updating: bool,
 }
+
+/// Work done when the `Ui` updates, rather than when a property is read:
+/// making and dropping a `Repeater`'s or a view's delegates. It reads
+/// what it depends on itself and does nothing when that has not changed.
+pub type Effect = Rc<dyn Fn(&mut Ui)>;
 
 impl fmt::Debug for Ui {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -173,6 +193,8 @@ impl Ui {
             signals: crate::signal::Signals::default(),
             input: crate::input::Input::default(),
             focus: crate::focus::Focus::default(),
+            effects: Vec::new(),
+            updating: false,
         };
         ui.scale = ui.prop(1.0_f32);
         ui
@@ -184,6 +206,38 @@ impl Ui {
             id: self.alloc(value.into_value()),
             marker: PhantomData,
         }
+    }
+
+    /// Run `effect` at each [`Ui::update`] while `item` lives, and once
+    /// now.
+    pub fn add_effect(&mut self, item: ItemId, effect: Effect) {
+        self.effects.push((item, Rc::clone(&effect)));
+        if !self.updating {
+            self.updating = true;
+            effect(self);
+            self.updating = false;
+        }
+    }
+
+    /// Bring what is made from the properties up to date: every
+    /// `Repeater`'s and view's delegates. A frame, the pointer and keys do
+    /// it first; a program that reads the tree straight after changing a
+    /// model calls it itself.
+    pub fn update(&mut self) {
+        if self.updating {
+            return;
+        }
+        self.updating = true;
+        let mut at = 0;
+        while let Some((item, effect)) = self.effects.get(at).cloned() {
+            if self.exists(item) {
+                effect(self);
+                at += 1;
+            } else {
+                let _ = self.effects.remove(at);
+            }
+        }
+        self.updating = false;
     }
 
     /// The scale frames are drawn at: buffer pixels to a logical one.

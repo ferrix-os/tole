@@ -159,6 +159,7 @@ impl Window {
                 other => rest.push(other),
             }
         }
+        ui.update();
         if ui.take_changed() {
             self.pending = true;
         }

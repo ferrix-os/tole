@@ -30,6 +30,9 @@ fn along(common: Common, axis: Axis) -> (Prop<f32>, Prop<f32>, Prop<f32>) {
 impl Ui {
     /// Bind the places of `parent`'s children when it is a positioner.
     pub(crate) fn position_children(&mut self, parent: ItemId) {
+        if self.place_together(parent) {
+            return;
+        }
         let (props, axis) = match self.kind(parent) {
             Some(Kind::Row(props)) => (props, Axis::Across),
             Some(Kind::Column(props)) => (props, Axis::Down),
@@ -39,9 +42,9 @@ impl Ui {
             return;
         };
         let children: Vec<Common> = self
-            .children(parent)
-            .iter()
-            .filter_map(|&child| self.common(child))
+            .placed_children(parent)
+            .into_iter()
+            .map(|(_, common)| common)
             .collect();
         let mut before: Option<Common> = None;
         for &child in &children {

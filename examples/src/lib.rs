@@ -58,7 +58,7 @@ pub fn find_text(ui: &mut Ui, label: &str) -> Option<tole::ItemId> {
 }
 
 /// Every demo, in the README's order.
-pub const DEMOS: [Demo; 4] = [
+pub const DEMOS: [Demo; 5] = [
     Demo {
         name: "hello",
         about: "the smallest program",
@@ -91,6 +91,11 @@ pub const DEMOS: [Demo; 4] = [
             }
             Some(root.common())
         },
+    },
+    Demo {
+        name: "form",
+        about: "RowLayout, ColumnLayout, GridLayout, Flow, Grid and Repeater",
+        make: |ui| Form::new(ui, None).map(|root| root.common()),
     },
 ];
 

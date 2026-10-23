@@ -264,6 +264,7 @@ impl Ui {
     /// A key went down: delivered as the module says. Answers whether
     /// anything took it; a program may use one nobody took itself.
     pub fn key_press(&mut self, event: &KeyEvent) -> bool {
+        self.update();
         let start = self
             .active_focus_item()
             .or_else(|| self.focus_root())
@@ -285,6 +286,7 @@ impl Ui {
 
     /// A key came up: `Keys.onReleased`, bubbling.
     pub fn key_release(&mut self, event: &KeyEvent) -> bool {
+        self.update();
         let mut at = self
             .active_focus_item()
             .or_else(|| self.focus_root())
