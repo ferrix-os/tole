@@ -20,11 +20,15 @@
 //! delegates with `modelData` and `index` (U4a); `Flickable`,
 //! `ListView`, `delegate:`, `DelegateChooser` and `group()` (U4b);
 //! `states`, `transitions`, `Behavior on`, animations `on` a property,
-//! `Easing.*` and `Animation.Infinite` (U5).
+//! `Easing.*` and `Animation.Infinite` (U5); `import`ed modules, the
+//! framework's `Fx.Controls` among them, `singleton`s, property aliases
+//! and a component's `default property alias` for where a use's children
+//! go, parameters with defaults, and `Exclusive.checked` (U6).
 
 mod emit;
 mod lexer;
 mod parser;
+mod resolve;
 mod types;
 
 use std::fmt;
@@ -68,11 +72,44 @@ impl std::error::Error for Diagnostic {}
 ///
 /// The first thing wrong, with its place.
 pub fn compile(sources: &[(&str, &str)]) -> Result<String, Diagnostic> {
-    let mut files = Vec::new();
+    let mut units = Vec::new();
     for (name, text) in sources {
         let tokens = lexer::lex(name, text)?;
-        files.push(((*name).to_owned(), parser::parse(name, tokens)?));
+        units.push(resolve::Unit {
+            name: (*name).to_owned(),
+            module: String::new(),
+            file: parser::parse(name, tokens)?,
+        });
     }
+    // The framework's modules the files import, and those they import.
+    let mut loaded: Vec<String> = Vec::new();
+    let mut at = 0;
+    while let Some(unit) = units.get(at) {
+        let wanted: Vec<String> = unit
+            .file
+            .imports
+            .iter()
+            .map(|import| import.text.clone())
+            .filter(|name| !loaded.contains(name))
+            .collect();
+        for module in wanted {
+            if let Some((_, _, files)) = resolve::MODULES.iter().find(|(m, _, _)| *m == module) {
+                for (file, text) in *files {
+                    let name = format!("<{module}>/{file}");
+                    let tokens = lexer::lex(&name, text)?;
+                    let file = parser::parse(&name, tokens)?;
+                    units.push(resolve::Unit {
+                        name,
+                        module: module.clone(),
+                        file,
+                    });
+                }
+            }
+            loaded.push(module);
+        }
+        at += 1;
+    }
+    let files = resolve::resolve(units)?;
     emit::Program::gather(&files)?.emit()
 }
 

@@ -157,6 +157,10 @@ pub struct Ui {
     updating: bool,
     /// The animations' clock.
     pub(crate) clock: crate::anim::Clock,
+    /// The items whose `checked` is exclusive among their siblings'.
+    pub(crate) exclusives: Vec<(ItemId, Prop<bool>)>,
+    /// The singletons, by type: each made the first time it is asked for.
+    globals: std::collections::HashMap<std::any::TypeId, Box<dyn std::any::Any>>,
 }
 
 /// Work done when the `Ui` updates, rather than when a property is read:
@@ -202,6 +206,8 @@ impl Ui {
             effects: Vec::new(),
             updating: false,
             clock: crate::anim::Clock::default(),
+            exclusives: Vec::new(),
+            globals: std::collections::HashMap::new(),
         };
         ui.scale = ui.prop(1.0_f32);
         ui
@@ -213,6 +219,22 @@ impl Ui {
             id: self.alloc(value.into_value()),
             marker: PhantomData,
         }
+    }
+
+    /// The `T` of this `Ui`, a singleton of the markup: made by `make`
+    /// the first time it is asked for, and the same one after.
+    pub fn global<T: Copy + 'static>(&mut self, make: fn(&mut Ui) -> T) -> T {
+        let id = std::any::TypeId::of::<T>();
+        if let Some(held) = self
+            .globals
+            .get(&id)
+            .and_then(|any| any.downcast_ref::<T>())
+        {
+            return *held;
+        }
+        let made = make(self);
+        let _ = self.globals.insert(id, Box::new(made));
+        made
     }
 
     /// Run `effect` at each [`Ui::update`] while `item` lives, and once

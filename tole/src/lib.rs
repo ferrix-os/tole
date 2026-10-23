@@ -17,6 +17,7 @@
 mod anim;
 mod cpu;
 mod damage;
+mod exclusive;
 mod flick;
 mod focus;
 pub mod handles;

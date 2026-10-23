@@ -1,0 +1,47 @@
+// Fx.Controls in one window: every control in the style's one look, its
+// colours the Theme's tokens. The same file is drawn light and dark; only
+// `Theme.dark` differs.
+import Fx
+import Fx.Controls
+
+component Controls : Rectangle {
+    width: 660; height: 430
+    color: Theme.bg2
+
+    TabBar {
+        id: tabs
+        x: 20; y: 12
+        tabs: ["Controls", "Text", "Lists"]
+    }
+
+    Row {
+        x: 20; y: 66
+        spacing: 16
+        GroupBox {
+            title: "BUTTONS"
+            Button { text: "Save"; highlighted: true }
+            Button { text: "Cancel" }
+            Button { text: "Flat"; flat: true }
+            Button { text: "Disabled"; enabled: false }
+        }
+        GroupBox {
+            title: "CHOICES"
+            CheckBox { text: "Follow live"; checked: true }
+            CheckBox { text: "Wrap lines" }
+            Column {
+                spacing: 6
+                RadioButton { text: "Light" }
+                RadioButton { text: "Dark"; checked: true }
+                RadioButton { text: "System" }
+            }
+            Switch { text: "Notifications"; checked: true }
+            Switch { text: "Quiet hours" }
+        }
+        GroupBox {
+            title: "PROGRESS"
+            Label { text: "Indexing 3 of 4 boots" }
+            ProgressBar { width: 180; value: 0.62 }
+            Label { text: "Disabled label"; enabled: false }
+        }
+    }
+}

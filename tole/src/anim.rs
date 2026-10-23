@@ -280,6 +280,11 @@ pub(crate) struct Clock {
     running: Vec<Running>,
     /// The next id.
     next: u64,
+    /// How many times it was ticked: a `Behavior` animates only what
+    /// changes after the tick that followed its making, so a tree being
+    /// set up shows its values at once, as QML's do before the component
+    /// is complete.
+    ticks: u64,
 }
 
 impl Ui {
@@ -287,6 +292,7 @@ impl Ui {
     /// are then, and those that ended are dropped.
     pub fn tick(&mut self, now: f64) {
         self.clock.now = now;
+        self.clock.ticks = self.clock.ticks.wrapping_add(1);
         let running = core::mem::take(&mut self.clock.running);
         let mut kept = Vec::new();
         for run in running {
@@ -412,6 +418,7 @@ impl Ui {
         self.own_cell(owner, shown);
         self.attach_direct(prop, Rc::new(move |ui: &mut Ui| ui.read(shown)));
         let last: Rc<RefCell<(Value, Option<Rc<str>>)>> = Rc::new(RefCell::new((first, None)));
+        let made_at = self.clock.ticks;
         if let Animate::Transitions { active, .. } = &animate {
             let state = self.get(*active);
             last.borrow_mut().1 = Some(state);
@@ -431,6 +438,7 @@ impl Ui {
                 return;
             }
             let tween = match &animate {
+                _ if ui.clock.ticks == made_at => None,
                 Animate::Always(tween) => Some(*tween),
                 Animate::Transitions { rules, .. } => match (&was_state, &state) {
                     (Some(from), Some(to)) if from != to => rules

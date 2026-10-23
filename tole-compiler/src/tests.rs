@@ -51,7 +51,7 @@ component Badge : Rectangle {
     assert!(rust.contains("::tole::Color::rgba(210, 56, 43, 255)"));
     assert!(rust.contains("::tole::Color::rgba(0, 0, 0, 0)"));
     // The child under the root, its text bound to the root's property.
-    assert!(rust.contains("let e1 = ::tole::handles::Text::new(ui, ::core::option::Option::Some(::tole::Element::id(&this)))?;"));
+    assert!(rust.contains("let e1 = ::tole::handles::Text::new(ui, ::core::option::Option::Some(::tole::Element::content(&base)))?;"), "{rust}");
     assert!(rust.contains("::tole::Prop::bind(e1.props.text, ui, move |ui: &mut ::tole::Ui| -> ::std::rc::Rc<str> { ui.get(this.label) });"), "{rust}");
     assert!(rust.contains("center_in: ::core::option::Option::Some(::tole::Element::id(&this))"));
 }
@@ -104,7 +104,9 @@ component Gauge : Rectangle {
         "{rust}"
     );
     assert!(
-        rust.contains("this.percent(ui, ((1_i32) as f32))"),
+        rust.contains(
+            "let receiver = this; let arg0: f32 = ((1_i32) as f32); receiver.percent(ui, arg0)"
+        ),
         "{rust}"
     );
     assert!(rust.contains("::tole::Font::new(&"));
@@ -499,5 +501,155 @@ fn bad_animations_are_refused() {
             "component A : Item { states: State { name: \"a\"; PropertyChanges { wings: 2 } } }"
         ),
         "1:67: A has no property `wings`"
+    );
+}
+
+#[test]
+fn modules_singletons_and_the_controls() {
+    let rust = accepted(
+        r#"
+import Fx
+import Fx.Controls
+component Page : Rectangle {
+    color: Theme.bg
+    Button { id: save; text: "Save"; highlighted: true; onClicked: Theme.dark = !Theme.dark }
+    Text { text: save.text; font: Theme.sans(); color: Theme.ink }
+}
+"#,
+    );
+    // The controls are a Rust module of their own, which sees the top.
+    assert!(
+        rust.contains("pub mod fx_controls {\nuse super::*;"),
+        "{rust}"
+    );
+    assert!(rust.contains("pub struct Button {"));
+    assert!(
+        rust.contains("let e1 = fx_controls::Button::new(ui, "),
+        "{rust}"
+    );
+    // A singleton: made once per Ui, its properties read and set by name.
+    assert!(
+        rust.contains(
+            "pub fn instance(ui: &mut ::tole::Ui) -> Self {\n        ui.global(Self::make)"
+        )
+    );
+    assert!(
+        rust.contains("::tole::Prop::get(fx_controls::Theme::instance(ui).bg, ui)"),
+        "{rust}"
+    );
+    assert!(
+        rust.contains("::tole::Prop::set(fx_controls::Theme::instance(ui).dark, ui, value)"),
+        "{rust}"
+    );
+    // A function's missing arguments are its defaults.
+    assert!(rust.contains("let receiver = fx_controls::Theme::instance(ui); let arg0: f32 = ((13_i32) as f32); let arg1: i32 = 400_i32; receiver.sans(ui, arg0, arg1)"), "{rust}");
+    // Without the import, the controls are not there.
+    assert_eq!(
+        refused("import Fx\ncomponent P : Item { Button { } }"),
+        "2:22: `Button` is neither a kind of item nor a component"
+    );
+    assert_eq!(
+        refused("import Fx.Widgets\ncomponent P : Item { }"),
+        "1:8: there is no module `Fx.Widgets`: `Fx` and `Fx.Controls` are"
+    );
+}
+
+#[test]
+fn a_file_sees_its_own_then_its_imports_then_the_program() {
+    // Two files: one declares its own Button; the other imports the
+    // controls', and gets theirs.
+    let rust = compile(&[
+        (
+            "own.tole",
+            "component Button : Rectangle { property string label }\ncomponent Mine : Item { Button { label: \"x\" } }",
+        ),
+        (
+            "uses.tole",
+            "import Fx.Controls\ncomponent Theirs : Item { Button { text: \"y\" } }",
+        ),
+    ])
+    .unwrap_or_else(|error| panic!("{error}"));
+    assert!(rust.contains("let e1 = Button::new(ui"), "{rust}");
+    assert!(
+        rust.contains("let e1 = fx_controls::Button::new(ui"),
+        "{rust}"
+    );
+}
+
+#[test]
+fn aliases_and_where_a_uses_children_go() {
+    let rust = accepted(
+        r#"
+component Card : Rectangle {
+    property alias title: heading.text
+    property alias titleColor: heading.color
+    default property alias content: body
+    Text { id: heading; text: "Card" }
+    Column { id: body; y: 30 }
+}
+component Page : Item {
+    Card {
+        title: "Mail"
+        Text { text: "inside"; anchors.left: parent.left }
+    }
+}
+"#,
+    );
+    // The alias is the item's own cell, so a change either way is seen
+    // both ways.
+    assert!(rust.contains("            title: e1.props.text,"), "{rust}");
+    assert!(rust.contains("            title_color: e1.props.color,"));
+    assert!(rust.contains("            content: ::tole::Element::content(&e2),"));
+    assert!(
+        rust.contains("    fn content(&self) -> ::tole::ItemId {\n        self.content\n    }")
+    );
+    // A use's children go where the default alias says; `parent` there is
+    // found when it runs.
+    assert!(
+        rust.contains("let e2 = ::tole::handles::Text::new(ui, ::core::option::Option::Some(::tole::Element::content(&e1)))?;"),
+        "{rust}"
+    );
+    assert!(
+        rust.contains("left: ui.parent(::tole::Element::id(&e2))"),
+        "{rust}"
+    );
+    // The alias is set like any property of the component.
+    assert!(
+        rust.contains("::tole::Prop::set(e1.title, ui, ::std::rc::Rc::<str>::from(\"Mail\"));"),
+        "{rust}"
+    );
+}
+
+#[test]
+fn bad_modules_aliases_and_singletons_are_refused() {
+    assert_eq!(
+        refused("component C : Item { property alias t: nothing.text }"),
+        "1:40: `nothing.text` names no property this alias can stand for"
+    );
+    assert_eq!(
+        refused("component C : Item { property alias t: 4 }"),
+        "1:37: an alias names what it stands for: `property alias text: label.text`, `default property alias content: box`"
+    );
+    assert_eq!(
+        refused("component C : Item { default property alias c: a.b; Item { id: a } }"),
+        "1:45: a default alias names the id of the item a use's children go in"
+    );
+    assert_eq!(
+        refused("singleton S { property int a: 1; Item { } }"),
+        "1:34: a singleton holds properties and functions"
+    );
+    assert_eq!(
+        refused("singleton S { property int a: 1 }\ncomponent C : Item { width: S.b }"),
+        "2:29: `S` has no property `b`"
+    );
+    assert_eq!(
+        refused(
+            "component C : Item { function f(a: int, b: int = 2): int { return a + b }\n width: f() }"
+        ),
+        "2:9: `f` takes 2 arguments"
+    );
+    assert_eq!(
+        refused("component C : Item { property bool on\n Exclusive.checked: 3 }"),
+        "2:2: `Exclusive.checked: checked` names a bool property"
     );
 }

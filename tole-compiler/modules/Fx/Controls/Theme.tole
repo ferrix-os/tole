@@ -1,0 +1,56 @@
+// Fx.Controls' one style is read entirely from here (Ferrix's
+// docs/UI-FRAMEWORK.md §2.3). The tokens are the lode viewer's palette,
+// the customer's, light and dark by the design's CSS names; `dark`
+// switches every one of them, and a program gives its own values by
+// setting them (`Theme.accent = ...`, or from Rust).
+singleton Theme {
+    property bool dark: false
+
+    // Surfaces, from the window's ground up.
+    property color bg: dark ? "#1c1d21" : "#ffffff"
+    property color bg2: dark ? "#17181b" : "#fafaf8"
+    property color bg3: dark ? "#23242a" : "#f4f4f2"
+    property color hover: dark ? "#2a2c31" : "#efefeb"
+    property color fill: dark ? #ffffff12 : #0000000f
+
+    // Lines.
+    property color line: dark ? "#2e3036" : "#e6e6e2"
+    property color line2: dark ? "#27292e" : "#f0f0ec"
+    property color line3: dark ? "#3a3c43" : "#d6d6d0"
+    property color bar: dark ? "#4a4d54" : "#c8c8c2"
+
+    // Ink, strongest first, and ink on the accent.
+    property color ink: dark ? "#e8e8e6" : "#1a1a1a"
+    property color ink2: dark ? "#cfcfcb" : "#333333"
+    property color ink3: dark ? "#ababa7" : "#555555"
+    property color ink4: dark ? "#8b8b88" : "#888888"
+    property color ink5: dark ? "#6f6f73" : "#999999"
+    property color inv: dark ? "#141518" : "#ffffff"
+
+    // The accent and the states.
+    property color accent: dark ? "#7ea6f5" : "#2a62c9"
+    property color accentBg: dark ? #7ea6f529 : #2a62c91a
+    property color onAccent: dark ? "#141518" : "#ffffff"
+    property color red: "#d2382b"
+    property color redInk: dark ? "#ff7b6e" : "#c02c20"
+    property color redBg: dark ? "#3a201e" : "#fdf0ee"
+    property color amber: "#e9a91c"
+    property color amberInk: dark ? "#f0b93a" : "#7a5800"
+    property color amberBg: dark ? "#352c1b" : "#fdf6e3"
+    property color green: "#2fa35a"
+
+    // Shapes and room.
+    property real radius: 6
+    property real controlHeight: 30
+    property real spacing: 8
+
+    // The two faces.
+    property string sansFamily: "IBM Plex Sans, Inter, Liberation Sans, sans-serif"
+    property string monoFamily: "IBM Plex Mono, Liberation Mono, monospace"
+    function sans(px: real = 13, weight: int = 400): font {
+        return font(sansFamily, px, weight)
+    }
+    function mono(px: real = 12, weight: int = 400): font {
+        return font(monoFamily, px, weight)
+    }
+}

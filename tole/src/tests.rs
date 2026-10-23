@@ -1337,6 +1337,14 @@ fn a_behavior_animates_every_change_from_where_it_is() {
             easing: crate::Easing::Linear,
         }),
     );
+    // Set up before the clock first ticks: shown at once, as a tree being
+    // made is, and a control given its value by the code using it.
+    wide.set(&mut ui, true);
+    ui.update();
+    assert!(!ui.animating());
+    assert_eq!(ui.get(r.common.width), 200.0);
+    wide.set(&mut ui, false);
+    ui.update();
     ui.tick(1000.0);
     assert_eq!(ui.get(r.common.width), 100.0, "no animation to begin with");
     // The binding it was given still follows what it read.
@@ -1411,6 +1419,7 @@ fn states_choose_values_and_transitions_animate_the_change() {
         },
     );
     assert_eq!(ui.get(r.common.x), 10.0);
+    ui.tick(0.0);
     r.common.state.set(&mut ui, Rc::from("moved"));
     ui.update();
     ui.tick(100.0);

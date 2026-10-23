@@ -1,0 +1,58 @@
+// Tabs along a line, one of them current: `tabs` are their titles, and a
+// click or Left and Right while it has the focus change `currentIndex`.
+import Fx
+
+component TabBar : Item {
+    id: bar
+    property list<string> tabs
+    property int currentIndex: 0
+    signal activated(int index)
+
+    implicitWidth: row.implicitWidth
+    implicitHeight: 34
+    activeFocusOnTab: true
+
+    Keys.onLeftPressed: if (currentIndex > 0) { currentIndex = currentIndex - 1; activated(currentIndex) }
+    Keys.onRightPressed: if (currentIndex < tabs.length - 1) { currentIndex = currentIndex + 1; activated(currentIndex) }
+
+    Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: 1
+        color: Theme.line
+    }
+    Row {
+        id: row
+        height: parent.height
+        spacing: 4
+        Repeater {
+            model: bar.tabs
+            delegate: Item {
+                width: title.implicitWidth + 24
+                height: bar.height
+                Text {
+                    id: title
+                    anchors.centerIn: parent
+                    text: modelData
+                    font: Theme.sans(13, index == bar.currentIndex ? 600 : 500)
+                    color: index == bar.currentIndex ? Theme.ink : tab.containsMouse ? Theme.ink2 : Theme.ink4
+                }
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    height: 2
+                    visible: index == bar.currentIndex
+                    color: bar.activeFocus ? Theme.ink : Theme.accent
+                }
+                MouseArea {
+                    id: tab
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: { bar.currentIndex = index; bar.activated(index) }
+                }
+            }
+        }
+    }
+}

@@ -572,6 +572,90 @@ component Transitions : Rectangle {
 
 ![transitions, played](docs/screenshots/transitions-animated.png)
 
+### Controls and the theme
+
+`import Fx.Controls` brings the framework's controls: `Button`,
+`CheckBox`, `RadioButton`, `Switch`, `Label`, `ProgressBar`, `TabBar`
+and `GroupBox` so far, each a `.tole` file inside the compiler, written
+on the primitives as Qt Quick Controls are in QML. There is one style;
+every colour, radius and face in it is a token of the `Theme`
+singleton, the lode viewer's palette in light and dark. Setting
+`Theme.dark` (from markup, or from Rust:
+`fx_controls::Theme::instance(&mut ui).dark.set(&mut ui, true)`)
+switches every token, and every control with them; a program gives its
+own accent the same way. The two pictures are the same file, drawn
+with `Theme.dark` false and true.
+
+```qml
+// Fx.Controls in one window: every control in the style's one look, its
+// colours the Theme's tokens. The same file is drawn light and dark; only
+// `Theme.dark` differs.
+import Fx
+import Fx.Controls
+
+component Controls : Rectangle {
+    width: 660; height: 430
+    color: Theme.bg2
+
+    TabBar {
+        id: tabs
+        x: 20; y: 12
+        tabs: ["Controls", "Text", "Lists"]
+    }
+
+    Row {
+        x: 20; y: 66
+        spacing: 16
+        GroupBox {
+            title: "BUTTONS"
+            Button { text: "Save"; highlighted: true }
+            Button { text: "Cancel" }
+            Button { text: "Flat"; flat: true }
+            Button { text: "Disabled"; enabled: false }
+        }
+        GroupBox {
+            title: "CHOICES"
+            CheckBox { text: "Follow live"; checked: true }
+            CheckBox { text: "Wrap lines" }
+            Column {
+                spacing: 6
+                RadioButton { text: "Light" }
+                RadioButton { text: "Dark"; checked: true }
+                RadioButton { text: "System" }
+            }
+            Switch { text: "Notifications"; checked: true }
+            Switch { text: "Quiet hours" }
+        }
+        GroupBox {
+            title: "PROGRESS"
+            Label { text: "Indexing 3 of 4 boots" }
+            ProgressBar { width: 180; value: 0.62 }
+            Label { text: "Disabled label"; enabled: false }
+        }
+    }
+}
+```
+
+![controls, light](docs/screenshots/controls-light.png)
+
+![controls, dark](docs/screenshots/controls-dark.png)
+
+What made them possible in the markup:
+
+* **Modules.** A file sees its own declarations first, then what it
+  imports, then the rest of the program's, so a program's own `Button`
+  and the controls' never meet; an imported module is written out as a
+  Rust module of its own (`fx_controls`).
+* **`singleton`s**: one object per `Ui`, of properties and functions,
+  reached by its name (`Theme.ink`, `Theme.sans(13, 500)`).
+* **Aliases**: `property alias text: label.text` is the label's own
+  property cell, so a change either way is seen both ways, and `default
+  property alias content: column` says where a use's children go, as
+  `GroupBox` does.
+* **Parameters with defaults**: `Theme.sans()` is 13 px, regular.
+* **`Exclusive.checked: checked`**: among the items beside each other
+  that say it, one is checked at a time, as radio buttons are.
+
 ### In a window
 
 Every demo also runs in a window on the Wayland desktop it is started
@@ -589,8 +673,8 @@ alone are drawn and handed to the compositor. A test holds the kept
 frame to what drawing the whole scene gives, pixel for pixel, as a
 rounded box wanders at scales 1, 1.5 and 2.
 
-More come as the framework reaches them: the controls and the theme in
-light and dark, a chart, and the lode viewer ported onto tole.
+More come as the framework reaches them: text fields, popups and the
+rest of the controls, a chart, and the lode viewer ported onto tole.
 
 ## Crates
 
@@ -611,6 +695,8 @@ light and dark, a chart, and the lode viewer ported onto tole.
   as Rust from a program's `build.rs` (`tole_compiler::build("ui")`), put
   in place with `tole::include_ui!()`. Errors name the file, line and
   column. It is a build dependency only: nothing of it is in a program.
+  The framework's modules (`Fx.Controls`, under `modules/`) are `.tole`
+  files inside it, compiled with the program's.
 * **`tole-examples`** (`examples/`): the demos above.
 
 ## Building

@@ -58,7 +58,7 @@ pub fn find_text(ui: &mut Ui, label: &str) -> Option<tole::ItemId> {
 }
 
 /// Every demo, in the README's order.
-pub const DEMOS: [Demo; 7] = [
+pub const DEMOS: [Demo; 9] = [
     Demo {
         name: "hello",
         about: "the smallest program",
@@ -120,6 +120,20 @@ pub const DEMOS: [Demo; 7] = [
             ui.update();
             ui.tick(1000.0);
             Some(root.common())
+        },
+    },
+    Demo {
+        name: "controls-light",
+        about: "Fx.Controls in the light palette",
+        make: |ui| Controls::new(ui, None).map(|root| root.common()),
+    },
+    Demo {
+        name: "controls-dark",
+        about: "the same, Theme.dark set",
+        make: |ui| {
+            let theme = fx_controls::Theme::instance(ui);
+            theme.dark.set(ui, true);
+            Controls::new(ui, None).map(|root| root.common())
         },
     },
 ];
@@ -444,6 +458,84 @@ mod tests {
         assert_eq!(x(&mut ui), 220.0);
         assert!(ui.animating(), "the dot pulses for ever");
         let _ = root;
+    }
+
+    #[test]
+    fn radio_buttons_beside_each_other_are_exclusive() {
+        use super::fx_controls::RadioButton;
+        use tole::Element;
+        let mut ui = tole::Ui::new(super::fonts());
+        let column = tole::handles::Column::new(&mut ui, None).expect("made");
+        let mut radios = Vec::new();
+        for label in ["Light", "Dark", "System"] {
+            let radio = RadioButton::new(&mut ui, Some(column.id())).expect("made");
+            radio.text.set(&mut ui, label.into());
+            radios.push(radio);
+        }
+        let other = RadioButton::new(&mut ui, None).expect("a radio button elsewhere");
+        other.checked.set(&mut ui, true);
+        radios[1].checked.set(&mut ui, true);
+        ui.update();
+        super::press(&mut ui, "System", true).expect("clicked");
+        ui.update();
+        let checked: Vec<bool> = radios.iter().map(|r| r.checked.get(&mut ui)).collect();
+        assert_eq!(checked, [false, false, true]);
+        assert!(
+            other.checked.get(&mut ui),
+            "another parent's is not touched"
+        );
+        // Space on the focused one checks it, and the others follow.
+        ui.force_active_focus(radios[0].id());
+        super::key(&mut ui, "space");
+        ui.update();
+        let checked: Vec<bool> = radios.iter().map(|r| r.checked.get(&mut ui)).collect();
+        assert_eq!(checked, [true, false, false]);
+    }
+
+    #[test]
+    fn check_boxes_switches_buttons_and_tabs_answer() {
+        use super::fx_controls::{Button, ButtonSignal, CheckBox, Switch, TabBar, Theme};
+        use tole::Element;
+        let mut ui = tole::Ui::new(super::fonts());
+        let column = tole::handles::Column::new(&mut ui, None).expect("made");
+        let check = CheckBox::new(&mut ui, Some(column.id())).expect("made");
+        check.text.set(&mut ui, "Wrap".into());
+        let switch = Switch::new(&mut ui, Some(column.id())).expect("made");
+        switch.text.set(&mut ui, "Live".into());
+        let button = Button::new(&mut ui, Some(column.id())).expect("made");
+        button.text.set(&mut ui, "Go".into());
+        let tabs = TabBar::new(&mut ui, Some(column.id())).expect("made");
+        tabs.tabs
+            .set(&mut ui, vec!["One".into(), "Two".into(), "Three".into()]);
+        super::press(&mut ui, "Wrap", true).expect("clicked");
+        assert!(check.checked.get(&mut ui));
+        super::press(&mut ui, "Live", true).expect("clicked");
+        assert!(switch.checked.get(&mut ui));
+        let _ = ui.take_signals();
+        super::press(&mut ui, "Go", true).expect("clicked");
+        ui.force_active_focus(button.id());
+        super::key(&mut ui, "Return");
+        let heard = ui
+            .take_signals()
+            .iter()
+            .filter(|e| button.signal(e) == Some(ButtonSignal::Clicked))
+            .count();
+        assert_eq!(heard, 2, "a click and Return");
+        super::press(&mut ui, "Three", true).expect("clicked");
+        assert_eq!(tabs.current_index.get(&mut ui), 2);
+        ui.force_active_focus(tabs.id());
+        super::key(&mut ui, "Left");
+        super::key(&mut ui, "Left");
+        super::key(&mut ui, "Left");
+        assert_eq!(tabs.current_index.get(&mut ui), 0, "and not past the first");
+        // The theme changes every control's colours at once.
+        let light = ui.get(button.base.props.color);
+        let theme = Theme::instance(&mut ui);
+        theme.dark.set(&mut ui, true);
+        let dark = ui.get(button.base.props.color);
+        assert_ne!(light, dark);
+        assert_eq!(dark, theme.bg.get(&mut ui));
+        assert_eq!(Theme::instance(&mut ui), theme, "one per Ui");
     }
 
     #[test]

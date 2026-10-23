@@ -1,17 +1,20 @@
 //! The markup's grammar, into a tree.
 //!
 //! ```text
-//! file      := { import | struct | enum | component }
+//! file      := { import | struct | enum | component | singleton }
 //! import    := "import" name { "." name } [ version ]
+//! singleton := "singleton" Name "{" members "}"
 //! struct    := "struct" Name "{" { field (";" | "," | newline) } "}"
 //! enum      := "enum" Name "{" Name { "," Name } "}"
 //! component := ["export"] "component" Name ":" Base "{" members "}"
-//! member    := ["readonly" | "required"] "property" type name [":" expr]
+//! member    := ["readonly" | "required" | "default"] "property" type name [":" expr]
+//!            | ["default"] "property" "alias" name ":" path
 //!            | "id" ":" name
 //!            | path ":" expr                 (a binding; path is a.b.c)
 //!            | group "{" { name ":" expr } "}"   (border { width: 1 })
 //!            | Type "{" members "}"          (a child: its type starts upper case)
 //!            | "function" name "(" params ")" ":" type "{" "return" expr "}"
+//!                                         (a parameter may end `= constant`)
 //!            | "signal" name "(" params ")"
 //! ```
 
@@ -30,6 +33,8 @@ pub(crate) struct Ident {
 /// A file.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct File {
+    /// The modules it imports: `Fx.Controls`, as written.
+    pub imports: Vec<Ident>,
     /// Its declarations.
     pub decls: Vec<Decl>,
 }
@@ -46,6 +51,9 @@ pub(crate) enum Decl {
     Enum { name: Ident, variants: Vec<Ident> },
     /// `component Name : Base { ... }`.
     Component { name: Ident, root: Element },
+    /// `singleton Name { ... }`: one object per `Ui`, of properties and
+    /// functions, reached by its name.
+    Singleton { name: Ident, root: Element },
 }
 
 /// An element: a type and its members.
@@ -60,11 +68,14 @@ pub(crate) struct Element {
 /// One member of an element.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Member {
-    /// `property type name: expr`.
+    /// `property type name: expr`; `property alias name: id.prop`, whose
+    /// `ty` is `alias` and `init` the path; `default property alias
+    /// name: id`, where a use's children go.
     Property {
         name: Ident,
         ty: Ident,
         init: Option<Expr>,
+        default: bool,
     },
     /// `id: name`.
     Id(Ident),
@@ -76,6 +87,8 @@ pub(crate) enum Member {
     Function {
         name: Ident,
         params: Vec<(Ident, Ident)>,
+        /// Each parameter's default, if it has one.
+        defaults: Vec<Option<Expr>>,
         ret: Ident,
         body: Expr,
     },
@@ -139,6 +152,9 @@ pub(crate) enum Expr {
     /// `list[i]`, then perhaps `.field`s.
     Index(Box<Expr>, Box<Expr>, Vec<Ident>, Pos),
 }
+
+/// Parameters: each a name and a type.
+pub(crate) type Params = Vec<(Ident, Ident)>;
 
 /// A part of a string expression.
 #[derive(Clone, Debug, PartialEq)]
@@ -305,15 +321,33 @@ impl Parser<'_> {
     /// The whole file.
     fn file(&mut self) -> Result<File, Diagnostic> {
         let mut decls = Vec::new();
+        let mut imports = Vec::new();
         loop {
             self.separators();
             if matches!(self.peek(), Tok::End) {
-                return Ok(File { decls });
+                return Ok(File { imports, decls });
             }
             if self.at_word("import") {
+                let _ = self.bump();
+                let mut name = self.ident()?;
+                while self.eat(".") {
+                    let next = self.ident()?;
+                    name.text = format!("{}.{}", name.text, next.text);
+                }
+                // A version, as QML once wrote them, is read and ignored.
                 while !matches!(self.peek(), Tok::Newline | Tok::End | Tok::Punct(";")) {
                     let _ = self.bump();
                 }
+                imports.push(name);
+            } else if self.at_word("singleton") && matches!(self.peek2(), Tok::Ident(_)) {
+                let _ = self.bump();
+                let name = self.ident()?;
+                let kind = Ident {
+                    text: "QtObject".to_owned(),
+                    pos: name.pos,
+                };
+                let root = self.element_body(kind)?;
+                decls.push(Decl::Singleton { name, root });
             } else if self.at_word("struct") {
                 let _ = self.bump();
                 decls.push(self.structure()?);
@@ -326,7 +360,7 @@ impl Parser<'_> {
                 }
                 if !self.at_word("component") {
                     return Err(self.error(
-                        "a file holds `import`, `struct`, `enum` and `component` declarations",
+                        "a file holds `import`, `struct`, `enum`, `component` and `singleton` declarations",
                     ));
                 }
                 let _ = self.bump();
@@ -391,7 +425,11 @@ impl Parser<'_> {
 
     /// One member, or a group's several.
     fn member(&mut self) -> Result<Vec<Member>, Diagnostic> {
-        if self.at_word("readonly") || self.at_word("required") || self.at_word("default") {
+        let mut default = false;
+        while (self.at_word("readonly") || self.at_word("required") || self.at_word("default"))
+            && matches!(self.peek2(), Tok::Ident(_))
+        {
+            default |= self.at_word("default");
             let _ = self.bump();
         }
         if self.at_word("property") && matches!(self.peek2(), Tok::Ident(_)) {
@@ -403,12 +441,17 @@ impl Parser<'_> {
             } else {
                 None
             };
-            return Ok(vec![Member::Property { name, ty, init }]);
+            return Ok(vec![Member::Property {
+                name,
+                ty,
+                init,
+                default,
+            }]);
         }
         if self.at_word("function") && matches!(self.peek2(), Tok::Ident(_)) {
             let _ = self.bump();
             let name = self.ident()?;
-            let params = self.params()?;
+            let (params, defaults) = self.params_with_defaults()?;
             self.expect(":")?;
             let ret = self.ident()?;
             self.newlines();
@@ -424,6 +467,7 @@ impl Parser<'_> {
             return Ok(vec![Member::Function {
                 name,
                 params,
+                defaults,
                 ret,
                 body,
             }]);
@@ -603,8 +647,22 @@ impl Parser<'_> {
 
     /// `(name: type, ...)`, or `(type name, ...)` as a QML signal writes it.
     fn params(&mut self) -> Result<Vec<(Ident, Ident)>, Diagnostic> {
+        let (params, defaults) = self.params_with_defaults()?;
+        if let Some(pos) = defaults.iter().flatten().map(Expr::pos).next() {
+            return Err(Diagnostic {
+                file: self.file.to_owned(),
+                pos,
+                message: "only a function's parameters have defaults".to_owned(),
+            });
+        }
+        Ok(params)
+    }
+
+    /// The same, each perhaps ending `= default`.
+    fn params_with_defaults(&mut self) -> Result<(Params, Vec<Option<Expr>>), Diagnostic> {
         self.expect("(")?;
         let mut params = Vec::new();
+        let mut defaults = Vec::new();
         while !self.eat(")") {
             let first = self.type_name()?;
             if self.eat(":") {
@@ -613,12 +671,17 @@ impl Parser<'_> {
                 let name = self.ident()?;
                 params.push((name, first));
             }
+            defaults.push(if self.eat("=") {
+                Some(self.expr()?)
+            } else {
+                None
+            });
             if !self.eat(",") {
                 self.expect(")")?;
                 break;
             }
         }
-        Ok(params)
+        Ok((params, defaults))
     }
 
     /// An expression.

@@ -1,0 +1,30 @@
+// A titled card: what a use puts inside it goes in a column under the
+// title.
+import Fx
+
+component GroupBox : Rectangle {
+    id: box
+    property alias title: heading.text
+    default property alias content: column
+
+    implicitWidth: max(column.implicitWidth, heading.implicitWidth) + 32
+    implicitHeight: column.y + column.implicitHeight + 16
+    radius: 8
+    color: Theme.bg
+    border.width: 1
+    border.color: Theme.line
+
+    Text {
+        id: heading
+        x: 16; y: 12
+        visible: text != ""
+        font: Theme.sans(11, 600)
+        color: Theme.ink4
+    }
+    Column {
+        id: column
+        x: 16
+        y: heading.visible ? 36 : 16
+        spacing: 10
+    }
+}

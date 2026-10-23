@@ -1,0 +1,7 @@
+// Text in the style's face and ink.
+import Fx
+
+component Label : Text {
+    color: enabled ? Theme.ink : Theme.ink4
+    font: Theme.sans()
+}

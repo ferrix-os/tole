@@ -31,6 +31,18 @@ enum ElemTy {
 struct Component {
     /// The file it is in.
     file: String,
+    /// The Rust module it is written into: `""` for the program's own.
+    module: String,
+    /// Whether it is a `singleton`: properties and functions, no item.
+    singleton: bool,
+    /// Its `property alias`es: name and the path they stand for, until
+    /// they are resolved into `props`.
+    aliases: Vec<(String, Vec<Ident>)>,
+    /// Its `default property alias`: the field's name and the id where a
+    /// use's children go.
+    content: Option<(String, Ident)>,
+    /// Its functions' parameters' defaults.
+    defaults: BTreeMap<String, Vec<Option<Expr>>>,
     /// Its root element.
     root: Element,
     /// Its base: what its root is.
@@ -102,7 +114,7 @@ struct Code {
 
 impl Program {
     /// Every file's declarations gathered and checked for clashes.
-    pub(crate) fn gather(files: &[(String, File)]) -> Result<Self, Diagnostic> {
+    pub(crate) fn gather(files: &[(String, File, String)]) -> Result<Self, Diagnostic> {
         let mut program = Program {
             structs: BTreeMap::new(),
             enums: BTreeMap::new(),
@@ -121,7 +133,7 @@ impl Program {
             }
         };
         // Names first, so a struct's field may be an enum declared later.
-        for (file, parsed) in files {
+        for (file, parsed, _) in files {
             for decl in &parsed.decls {
                 match decl {
                     Decl::Enum { name, variants } => {
@@ -138,11 +150,13 @@ impl Program {
                         taken(name, file, &mut seen)?;
                         let _ = program.structs.insert(name.text.clone(), Vec::new());
                     }
-                    Decl::Component { name, .. } => taken(name, file, &mut seen)?,
+                    Decl::Component { name, .. } | Decl::Singleton { name, .. } => {
+                        taken(name, file, &mut seen)?;
+                    }
                 }
             }
         }
-        for (file, parsed) in files {
+        for (file, parsed, _) in files {
             for decl in &parsed.decls {
                 if let Decl::Struct { name, fields } = decl {
                     let mut typed = Vec::new();
@@ -157,14 +171,73 @@ impl Program {
                 }
             }
         }
-        for (file, parsed) in files {
+        for (file, parsed, module) in files {
             for decl in &parsed.decls {
-                if let Decl::Component { name, root } = decl {
+                let (name, root, singleton) = match decl {
+                    Decl::Component { name, root } => (name, root, false),
+                    Decl::Singleton { name, root } => (name, root, true),
+                    _ => continue,
+                };
+                {
                     let mut props = Vec::new();
                     let mut functions = BTreeMap::new();
+                    let mut defaults = BTreeMap::new();
                     let mut signals = Vec::new();
+                    let mut aliases = Vec::new();
+                    let mut content = None;
                     for member in &root.members {
+                        if singleton
+                            && !matches!(member, Member::Property { .. } | Member::Function { .. })
+                        {
+                            return Err(diag(
+                                file,
+                                member_pos(member).unwrap_or(name.pos),
+                                "a singleton holds properties and functions",
+                            ));
+                        }
                         match member {
+                            Member::Property {
+                                name,
+                                ty,
+                                init,
+                                default,
+                            } if ty.text == "alias" || *default => {
+                                let target = match init {
+                                    Some(Expr::Path(path)) if ty.text == "alias" => path.clone(),
+                                    _ => {
+                                        return Err(diag(
+                                            file,
+                                            name.pos,
+                                            "an alias names what it stands for: `property alias text: label.text`, `default property alias content: box`",
+                                        ));
+                                    }
+                                };
+                                if singleton {
+                                    return Err(diag(file, name.pos, "a singleton has no aliases"));
+                                }
+                                if *default {
+                                    let [id] = target.as_slice() else {
+                                        return Err(diag(
+                                            file,
+                                            name.pos,
+                                            "a default alias names the id of the item a use's children go in",
+                                        ));
+                                    };
+                                    if content.is_some() {
+                                        return Err(diag(file, name.pos, "one default alias"));
+                                    }
+                                    content = Some((name.text.clone(), id.clone()));
+                                } else {
+                                    if target.len() < 2 {
+                                        return Err(diag(
+                                            file,
+                                            name.pos,
+                                            "an alias names an item's property: `label.text`",
+                                        ));
+                                    }
+                                    aliases.push((name.text.clone(), target));
+                                }
+                            }
                             Member::Signal { name, params } => {
                                 let mut typed = Vec::new();
                                 for (param, ty) in params {
@@ -183,7 +256,11 @@ impl Program {
                                 props.push((name.text.clone(), program.ty(file, ty)?));
                             }
                             Member::Function {
-                                name, params, ret, ..
+                                name,
+                                params,
+                                defaults: given,
+                                ret,
+                                ..
                             } => {
                                 let mut typed = Vec::new();
                                 for (param, ty) in params {
@@ -191,16 +268,23 @@ impl Program {
                                 }
                                 let _ = functions
                                     .insert(name.text.clone(), (typed, program.ty(file, ret)?));
+                                let _ = defaults.insert(name.text.clone(), given.clone());
                             }
                             _ => {}
                         }
                     }
                     let base = match Kind::named(&root.kind.text) {
                         Some(kind) => ElemTy::Kind(kind),
+                        None if singleton => ElemTy::Kind(Kind::Item),
                         None => ElemTy::Component(root.kind.text.clone()),
                     };
                     let component = Component {
                         file: file.clone(),
+                        module: module.clone(),
+                        singleton,
+                        aliases,
+                        content,
+                        defaults,
                         root: root.clone(),
                         base,
                         props,
@@ -212,7 +296,99 @@ impl Program {
             }
         }
         program.no_cycles()?;
+        program.resolve_aliases()?;
         Ok(program)
+    }
+
+    /// Give each `property alias` the type of what it stands for. An alias
+    /// may stand for another component's alias, so this goes round until
+    /// nothing more is learned.
+    fn resolve_aliases(&mut self) -> Result<(), Diagnostic> {
+        loop {
+            let mut learned = Vec::new();
+            for (name, c) in &self.components {
+                for (alias, target) in &c.aliases {
+                    if c.props.iter().any(|(p, _)| p == alias) {
+                        continue;
+                    }
+                    if let Some((_, ty)) = self.alias_target(name, c, target) {
+                        learned.push((name.clone(), alias.clone(), ty));
+                    }
+                }
+            }
+            if learned.is_empty() {
+                break;
+            }
+            for (name, alias, ty) in learned {
+                if let Some(c) = self.components.get_mut(&name) {
+                    c.props.push((alias, ty));
+                }
+            }
+        }
+        for c in self.components.values() {
+            for (alias, target) in &c.aliases {
+                if !c.props.iter().any(|(p, _)| p == alias) {
+                    let at = target.first().map_or(Pos { line: 0, column: 0 }, |t| t.pos);
+                    return Err(diag(
+                        &c.file,
+                        at,
+                        &format!(
+                            "`{}` names no property this alias can stand for",
+                            target
+                                .iter()
+                                .map(|t| t.text.as_str())
+                                .collect::<Vec<_>>()
+                                .join(".")
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// What `target` (`id.prop`) names in component `name`: the element's
+    /// type and the property's Rust path from its handle, and its type.
+    fn alias_target(
+        &self,
+        name: &str,
+        c: &Component,
+        target: &[Ident],
+    ) -> Option<((ElemTy, String), Ty)> {
+        let (id, rest) = target.split_first()?;
+        let ty = find_id(&c.root, &id.text, true).map(|element| {
+            if std::ptr::eq(element, &c.root) {
+                ElemTy::Component(name.to_owned())
+            } else {
+                match Kind::named(&element.kind.text) {
+                    Some(kind) => ElemTy::Kind(kind),
+                    None => ElemTy::Component(element.kind.text.clone()),
+                }
+            }
+        })?;
+        let names: Vec<&str> = rest.iter().map(|p| p.text.as_str()).collect();
+        // The root's own: its base's, since its aliases are what is being
+        // worked out.
+        let (rust, pty) = match &ty {
+            ElemTy::Component(own) if own == name => self
+                .property(&c.base, &names)
+                .map(|(rust, pty)| (format!(".base{rust}"), pty))?,
+            other => self.property(other, &names)?,
+        };
+        Some(((ty, rust), pty))
+    }
+
+    /// Whether a use of an element of `ty` puts its children somewhere
+    /// other than its root item: a component with a default alias, or one
+    /// based on such a component.
+    fn has_content(&self, ty: &ElemTy) -> bool {
+        match ty {
+            ElemTy::Kind(_) => false,
+            ElemTy::Component(name) => self
+                .components
+                .get(name)
+                .is_some_and(|c| c.content.is_some() || self.has_content(&c.base)),
+        }
     }
 
     /// A type a declaration names.
@@ -262,142 +438,120 @@ impl Program {
         let mut out = String::from(
             "// Written by tole-compiler from the program's .tole files. Not to be\n// edited: it is written again at each build.\n\n",
         );
-        for (name, variants) in &self.enums {
-            let _ = writeln!(
-                out,
-                "#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]\npub enum {name} {{"
-            );
-            for (index, variant) in variants.iter().enumerate() {
-                let default = if index == 0 { "#[default] " } else { "" };
-                let _ = writeln!(out, "    {default}{variant},");
+        // The program's own declarations at the top, each imported
+        // module's in a Rust module of its own, which sees the top's
+        // names (its own keys are `module::Name`).
+        let mut modules: Vec<&str> = vec![""];
+        for c in self.components.values() {
+            if !modules.contains(&c.module.as_str()) {
+                modules.push(&c.module);
             }
-            out.push_str("}\n\n");
-            out.push_str(&prop_type_impl(name));
         }
-        for (name, fields) in &self.structs {
-            let _ = writeln!(
-                out,
-                "#[derive(Clone, Debug, Default, PartialEq)]\npub struct {name} {{"
-            );
-            for (field, ty) in fields {
-                let _ = writeln!(out, "    pub {}: {},", snake(field), ty.rust());
+        for module in modules {
+            let mut body = String::new();
+            let mine = |key: &str| module_of(key) == module;
+            for (key, variants) in self.enums.iter().filter(|(k, _)| mine(k)) {
+                let name = short(key);
+                let _ = writeln!(
+                    body,
+                    "#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]\npub enum {name} {{"
+                );
+                for (index, variant) in variants.iter().enumerate() {
+                    let default = if index == 0 { "#[default] " } else { "" };
+                    let _ = writeln!(body, "    {default}{variant},");
+                }
+                body.push_str("}\n\n");
+                body.push_str(&prop_type_impl(name));
             }
-            out.push_str("}\n\n");
-            out.push_str(&prop_type_impl(name));
-        }
-        for (name, component) in &self.components {
-            out.push_str(&self.component(name, component)?);
+            for (key, fields) in self.structs.iter().filter(|(k, _)| mine(k)) {
+                let name = short(key);
+                let _ = writeln!(
+                    body,
+                    "#[derive(Clone, Debug, Default, PartialEq)]\npub struct {name} {{"
+                );
+                for (field, ty) in fields {
+                    let _ = writeln!(body, "    pub {}: {},", snake(field), ty.rust());
+                }
+                body.push_str("}\n\n");
+                body.push_str(&prop_type_impl(name));
+            }
+            for (key, component) in self.components.iter().filter(|(k, _)| mine(k)) {
+                if component.singleton {
+                    body.push_str(&self.singleton(key, component)?);
+                } else {
+                    body.push_str(&self.component(key, component)?);
+                }
+            }
+            if module.is_empty() {
+                out.push_str(&body);
+            } else {
+                let _ = write!(
+                    out,
+                    "/// The framework's module of the same name, as the program's files\n/// import it.\npub mod {module} {{\nuse super::*;\n\n{body}}}\n\n"
+                );
+            }
         }
         Ok(out)
     }
 
-    /// The Rust type of an element's handle.
-    fn handle(ty: &ElemTy) -> String {
-        match ty {
-            ElemTy::Kind(kind) => kind.handle().to_owned(),
-            ElemTy::Component(name) => name.clone(),
-        }
-    }
-
-    /// One component: its struct, `new`, functions and `Element`.
-    fn component(&self, name: &str, c: &Component) -> Result<String, Diagnostic> {
+    /// A singleton: a struct of its properties, made once per `Ui` and
+    /// reached by `instance`, and its functions.
+    fn singleton(&self, key: &str, c: &Component) -> Result<String, Diagnostic> {
         let file = c.file.as_str();
-        if let ElemTy::Component(base) = &c.base
-            && !self.components.contains_key(base)
-        {
-            return Err(diag(
-                file,
-                c.root.kind.pos,
-                &format!("`{base}` is neither a kind of item nor a component"),
-            ));
-        }
+        let name = short(key);
         let mut out = String::new();
         let _ = writeln!(
             out,
             "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub struct {name} {{"
         );
-        let _ = writeln!(out, "    pub base: {},", Self::handle(&c.base));
         for (prop, ty) in &c.props {
             let _ = writeln!(out, "    pub {}: ::tole::Prop<{}>,", snake(prop), ty.rust());
         }
-        for (signal, _) in &c.signals {
-            let _ = writeln!(out, "    pub {}: ::tole::SignalId,", snake(signal));
-        }
         out.push_str("}\n\n");
-
-        // Every element in tree order, with its local and its parent's.
-        let mut elements: Vec<(String, ElemTy, &Element, Option<Target>)> = Vec::new();
-        let mut ids: HashMap<String, (String, ElemTy)> = HashMap::new();
-        self.walk(
-            file,
-            &c.root,
-            "this".to_owned(),
-            ElemTy::Component(name.to_owned()),
-            Some(Target::Dynamic("this".to_owned())),
-            &mut elements,
-            &mut ids,
-        )?;
-
-        let _ = writeln!(out, "impl {name} {{");
         let _ = writeln!(
             out,
-            "    pub fn new(ui: &mut ::tole::Ui, parent: ::core::option::Option<::tole::ItemId>) -> ::core::option::Option<Self> {{"
+            "impl {name} {{\n    /// The one `{name}` of `ui`, made the first time it is asked for.\n    pub fn instance(ui: &mut ::tole::Ui) -> Self {{\n        ui.global(Self::make)\n    }}\n    fn make(ui: &mut ::tole::Ui) -> Self {{"
         );
-        let _ = writeln!(
-            out,
-            "        let base = {}::new(ui, parent)?;",
-            Self::handle(&c.base)
-        );
-        let _ = writeln!(out, "        let this = {name} {{\n            base,");
+        let _ = writeln!(out, "        let this = {name} {{");
         for (prop, ty) in &c.props {
             let _ = writeln!(
                 out,
-                "            {}: ui.own_prop(::tole::Element::id(&base), <{} as ::tole::PropType>::fallback()),",
+                "            {}: ui.prop(<{} as ::tole::PropType>::fallback()),",
                 snake(prop),
                 ty.rust()
             );
         }
-        for (signal, _) in &c.signals {
-            let _ = writeln!(
-                out,
-                "            {}: ui.own_signal(::tole::Element::id(&base)),",
-                snake(signal)
-            );
-        }
         out.push_str("        };\n");
-        for (var, ty, _, parent) in elements.iter().skip(1) {
-            let parent_id = match parent {
-                Some(Target::Static(parent_var, _)) => {
-                    format!("::tole::Element::id(&{parent_var})")
-                }
-                _ => "::tole::Element::id(&this)".to_owned(),
-            };
-            let _ = writeln!(
-                out,
-                "        let {var} = {}::new(ui, ::core::option::Option::Some({parent_id}))?;",
-                Self::handle(ty)
-            );
-        }
+        let ids = HashMap::new();
         let deferred = RefCell::new((String::new(), String::new()));
-        for (var, ty, element, parent) in &elements {
-            let scope = Scope {
-                component: c,
-                this: "this",
-                ids: &ids,
-                current: Some((var.clone(), ty.clone())),
-                parent: parent.clone(),
-                params: &[],
-                locals: &[],
-                depth: 0,
-                deferred: &deferred,
-                file,
-            };
-            out.push_str(&self.members(&scope, var, ty, element)?);
-        }
-        let (states, animations) = deferred.into_inner();
-        out.push_str(&states);
-        out.push_str(&animations);
-        out.push_str("        ui.update();\n        ::core::option::Option::Some(this)\n    }\n");
+        let scope = Scope {
+            component: c,
+            this: "this",
+            ids: &ids,
+            current: None,
+            parent: None,
+            params: &[],
+            locals: &[],
+            depth: 0,
+            deferred: &deferred,
+            file,
+        };
+        out.push_str(&self.members(&scope, "this", &ElemTy::Component(key.to_owned()), &c.root)?);
+        out.push_str("        this\n    }\n");
+        out.push_str(&self.functions(key, c, &ids)?);
+        out.push_str("}\n\n");
+        Ok(out)
+    }
+
+    /// A component's functions, as methods.
+    fn functions(
+        &self,
+        key: &str,
+        c: &Component,
+        ids: &HashMap<String, (String, ElemTy)>,
+    ) -> Result<String, Diagnostic> {
+        let file = c.file.as_str();
+        let mut out = String::new();
         let no_deferred = RefCell::new((String::new(), String::new()));
         for member in &c.root.members {
             if let Member::Function {
@@ -406,14 +560,14 @@ impl Program {
             {
                 let (typed, ret) = self
                     .components
-                    .get(name)
+                    .get(key)
                     .and_then(|c| c.functions.get(&fname.text))
                     .cloned()
                     .unwrap_or_default_fn();
                 let scope = Scope {
                     component: c,
                     this: "self",
-                    ids: &ids,
+                    ids,
                     current: None,
                     parent: None,
                     params: &typed,
@@ -437,6 +591,157 @@ impl Program {
                 );
             }
         }
+        Ok(out)
+    }
+
+    /// The Rust type of an element's handle.
+    fn handle(ty: &ElemTy) -> String {
+        match ty {
+            ElemTy::Kind(kind) => kind.handle().to_owned(),
+            ElemTy::Component(name) => name.clone(),
+        }
+    }
+
+    /// One component: its struct, `new`, functions and `Element`.
+    fn component(&self, key: &str, c: &Component) -> Result<String, Diagnostic> {
+        let file = c.file.as_str();
+        let name = short(key);
+        if let ElemTy::Component(base) = &c.base
+            && !self.components.contains_key(base)
+        {
+            return Err(diag(
+                file,
+                c.root.kind.pos,
+                &format!("`{base}` is neither a kind of item nor a component"),
+            ));
+        }
+        let mut out = String::new();
+        let _ = writeln!(
+            out,
+            "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub struct {name} {{"
+        );
+        let _ = writeln!(out, "    pub base: {},", Self::handle(&c.base));
+        for (prop, ty) in &c.props {
+            let _ = writeln!(out, "    pub {}: ::tole::Prop<{}>,", snake(prop), ty.rust());
+        }
+        for (signal, _) in &c.signals {
+            let _ = writeln!(out, "    pub {}: ::tole::SignalId,", snake(signal));
+        }
+        if let Some((field, _)) = &c.content {
+            let _ = writeln!(
+                out,
+                "    /// Where a use's children go.\n    pub {}: ::tole::ItemId,",
+                snake(field)
+            );
+        }
+        out.push_str("}\n\n");
+
+        // Every element in tree order, with its local and its parent's.
+        let mut elements: Vec<Walked<'_>> = Vec::new();
+        let mut ids: HashMap<String, (String, ElemTy)> = HashMap::new();
+        self.walk(
+            file,
+            &c.root,
+            "this".to_owned(),
+            ElemTy::Component(key.to_owned()),
+            (Some(Target::Dynamic("this".to_owned())), None),
+            &mut elements,
+            &mut ids,
+        )?;
+
+        let _ = writeln!(out, "impl {name} {{");
+        let _ = writeln!(
+            out,
+            "    pub fn new(ui: &mut ::tole::Ui, parent: ::core::option::Option<::tole::ItemId>) -> ::core::option::Option<Self> {{"
+        );
+        let _ = writeln!(
+            out,
+            "        let base = {}::new(ui, parent)?;",
+            Self::handle(&c.base)
+        );
+        // The items, then the component's own value, whose aliases are
+        // its items' properties.
+        for (var, ty, _, _, under) in elements.iter().skip(1) {
+            let under = match under.as_deref() {
+                Some("this") | None => "base",
+                Some(other) => other,
+            };
+            let _ = writeln!(
+                out,
+                "        let {var} = {}::new(ui, ::core::option::Option::Some(::tole::Element::content(&{under})))?;",
+                Self::handle(ty)
+            );
+        }
+        let _ = writeln!(out, "        let this = {name} {{\n            base,");
+        for (prop, ty) in &c.props {
+            if let Some((_, target)) = c.aliases.iter().find(|(a, _)| a == prop) {
+                let Some(((_, rust), _)) = self.alias_target(key, c, target) else {
+                    continue;
+                };
+                let var = target
+                    .first()
+                    .and_then(|id| ids.get(&id.text))
+                    .map_or("this", |(v, _)| v.as_str());
+                let var = if var == "this" { "base" } else { var };
+                let rust = if var == "base" {
+                    rust.strip_prefix(".base").unwrap_or(&rust).to_owned()
+                } else {
+                    rust
+                };
+                let _ = writeln!(out, "            {}: {var}{rust},", snake(prop));
+                continue;
+            }
+            let _ = writeln!(
+                out,
+                "            {}: ui.own_prop(::tole::Element::id(&base), <{} as ::tole::PropType>::fallback()),",
+                snake(prop),
+                ty.rust()
+            );
+        }
+        for (signal, _) in &c.signals {
+            let _ = writeln!(
+                out,
+                "            {}: ui.own_signal(::tole::Element::id(&base)),",
+                snake(signal)
+            );
+        }
+        if let Some((field, id)) = &c.content {
+            let Some((var, _)) = ids.get(&id.text) else {
+                return Err(diag(
+                    file,
+                    id.pos,
+                    &format!("`{}` is not an id here", id.text),
+                ));
+            };
+            let var = if var == "this" { "base" } else { var.as_str() };
+            let _ = writeln!(
+                out,
+                "            {}: ::tole::Element::content(&{var}),",
+                snake(field)
+            );
+        }
+        out.push_str("        };\n");
+        let deferred = RefCell::new((String::new(), String::new()));
+        for (var, ty, element, parent, _) in &elements {
+            let scope = Scope {
+                component: c,
+                this: "this",
+                ids: &ids,
+                current: Some((var.clone(), ty.clone())),
+                parent: parent.clone(),
+                params: &[],
+                locals: &[],
+                depth: 0,
+                deferred: &deferred,
+                file,
+            };
+            out.push_str(&self.members(&scope, var, ty, element)?);
+        }
+        let (states, animations) = deferred.into_inner();
+        out.push_str(&states);
+        out.push_str(&animations);
+        out.push_str("        ui.update();\n        ::core::option::Option::Some(this)\n    }\n");
+        out.push_str(&self.functions(key, c, &ids)?);
         if !c.signals.is_empty() {
             let _ = writeln!(
                 out,
@@ -484,9 +789,13 @@ impl Program {
             }
             out.push_str("}\n\n");
         }
+        let content = match &c.content {
+            Some((field, _)) => format!("self.{}", snake(field)),
+            None => "::tole::Element::content(&self.base)".to_owned(),
+        };
         let _ = writeln!(
             out,
-            "impl ::tole::Element for {name} {{\n    fn id(&self) -> ::tole::ItemId {{\n        ::tole::Element::id(&self.base)\n    }}\n    fn common(&self) -> ::tole::Common {{\n        ::tole::Element::common(&self.base)\n    }}\n}}\n"
+            "impl ::tole::Element for {name} {{\n    fn id(&self) -> ::tole::ItemId {{\n        ::tole::Element::id(&self.base)\n    }}\n    fn common(&self) -> ::tole::Common {{\n        ::tole::Element::common(&self.base)\n    }}\n    fn content(&self) -> ::tole::ItemId {{\n        {content}\n    }}\n}}\n"
         );
         Ok(out)
     }
@@ -499,8 +808,8 @@ impl Program {
         element: &'e Element,
         var: String,
         ty: ElemTy,
-        parent: Option<Target>,
-        out: &mut Vec<(String, ElemTy, &'e Element, Option<Target>)>,
+        (parent, under): (Option<Target>, Option<String>),
+        out: &mut Vec<Walked<'e>>,
         ids: &mut HashMap<String, (String, ElemTy)>,
     ) -> Result<(), Diagnostic> {
         for member in &element.members {
@@ -516,7 +825,7 @@ impl Program {
                 ));
             }
         }
-        out.push((var.clone(), ty.clone(), element, parent));
+        out.push((var.clone(), ty.clone(), element, parent, under));
         if matches!(ty, ElemTy::Kind(Kind::Repeater | Kind::ListView)) {
             // Its child is its delegate, made by a factory of its own.
             return Ok(());
@@ -556,12 +865,19 @@ impl Program {
                     }
                 }
                 let child_var = format!("{prefix}{}", out.len());
+                // Under a component that puts a use's children elsewhere,
+                // `parent` is wherever that is, known when it runs.
+                let parent = if self.has_content(&ty) {
+                    Target::Dynamic(child_var.clone())
+                } else {
+                    Target::Static(var.clone(), ty.clone())
+                };
                 self.walk(
                     file,
                     child,
                     child_var,
                     child_ty,
-                    Some(Target::Static(var.clone(), ty.clone())),
+                    (Some(parent), Some(var.clone())),
                     out,
                     ids,
                 )?;
@@ -581,6 +897,9 @@ impl Program {
                     && let Some((_, ty)) = c.props.iter().find(|(p, _)| p == one)
                 {
                     return Some((format!(".{}", snake(one)), ty.clone()));
+                }
+                if c.singleton {
+                    return None;
                 }
                 self.property(&c.base, path)
                     .map(|(rust, ty)| (format!(".base{rust}"), ty))
@@ -927,6 +1246,32 @@ impl Program {
         };
         let names: Vec<&str> = path.iter().map(|p| p.text.as_str()).collect();
         let rest = names.get(1..).unwrap_or(&[]);
+        if let Some(c) = self.components.get(&first.text).filter(|c| c.singleton) {
+            return match rest {
+                [prop] => c
+                    .props
+                    .iter()
+                    .find(|(p, _)| p == prop)
+                    .map(|(p, ty)| {
+                        (
+                            format!("{}::instance(ui).{}", first.text, snake(p)),
+                            ty.clone(),
+                        )
+                    })
+                    .ok_or_else(|| {
+                        diag(
+                            file,
+                            first.pos,
+                            &format!("`{}` has no property `{prop}`", short(&first.text)),
+                        )
+                    }),
+                _ => Err(diag(
+                    file,
+                    first.pos,
+                    "a singleton's property is `Name.property`",
+                )),
+            };
+        }
         let item = if first.text == "parent" {
             match &scope.parent {
                 Some(Target::Static(var, ty)) => Some((var.clone(), ty.clone())),
@@ -996,6 +1341,30 @@ impl Program {
                     out.push_str(&self.key_navigation(scope, var, path, expr)?);
                     continue;
                 }
+                Member::Binding { path, expr }
+                    if path.first().is_some_and(|p| p.text == "Exclusive") =>
+                {
+                    let at = path.first().map_or(expr.pos(), |p| p.pos);
+                    let (Expr::Path(names), [_, which]) = (expr, path.as_slice()) else {
+                        return Err(diag(
+                            file,
+                            at,
+                            "`Exclusive.checked: checked` names a bool property",
+                        ));
+                    };
+                    if which.text != "checked" {
+                        return Err(diag(file, which.pos, "`Exclusive` has `checked`"));
+                    }
+                    let (prop, pty) = self.lvalue(scope, names)?;
+                    if pty != Ty::Bool {
+                        return Err(diag(file, expr.pos(), "`Exclusive.checked` names a bool"));
+                    }
+                    let _ = writeln!(
+                        out,
+                        "        ui.exclusive(::tole::Element::id(&{var}), {prop});"
+                    );
+                    continue;
+                }
                 Member::Binding { path, expr } if matches!(path.as_slice(), [one] if one.text == "focus") =>
                 {
                     let Expr::Bool(on, _) = expr else {
@@ -1050,6 +1419,7 @@ impl Program {
                     })?;
                     ((format!("{var}{}", found.0), found.1), expr, pos)
                 }
+                Member::Property { ty, default, .. } if ty.text == "alias" || *default => continue,
                 Member::Property {
                     name,
                     init: Some(expr),
@@ -1377,7 +1747,7 @@ impl Program {
             delegate,
             root.clone(),
             root_ty.clone(),
-            parent_target,
+            (parent_target, None),
             &mut elements,
             &mut ids,
         )?;
@@ -1386,13 +1756,10 @@ impl Program {
             out,
             "::std::rc::Rc::new(move |ui: &mut ::tole::Ui, parent: ::tole::ItemId| -> ::core::option::Option<::tole::Delegate> {{"
         );
-        for (index, (evar, ety, _, parent)) in elements.iter().enumerate() {
-            let parent_id = match (index, parent) {
-                (0, _) => "parent".to_owned(),
-                (_, Some(Target::Static(parent_var, _))) => {
-                    format!("::tole::Element::id(&{parent_var})")
-                }
-                _ => "parent".to_owned(),
+        for (evar, ety, _, _, under) in &elements {
+            let parent_id = match under {
+                None => "parent".to_owned(),
+                Some(under) => format!("::tole::Element::content(&{under})"),
             };
             let _ = writeln!(
                 out,
@@ -1448,7 +1815,7 @@ impl Program {
             Ty::Int,
         ));
         let deferred = RefCell::new((String::new(), String::new()));
-        for (evar, ety, el, parent) in &elements {
+        for (evar, ety, el, parent, _) in &elements {
             let inner = Scope {
                 component: scope.component,
                 this: scope.this,
@@ -2329,6 +2696,35 @@ impl Program {
                 reads: false,
             });
         }
+        // A singleton's property.
+        if let Some(c) = self.components.get(&first.text).filter(|c| c.singleton) {
+            let found = rest
+                .first()
+                .and_then(|prop| c.props.iter().find(|(p, _)| p == prop));
+            let Some((prop, pty)) = found else {
+                return Err(diag(
+                    file,
+                    first.pos,
+                    &format!(
+                        "`{}` has no property `{}`",
+                        short(&first.text),
+                        rest.join(".")
+                    ),
+                ));
+            };
+            let text = format!(
+                "::tole::Prop::get({}::instance(ui).{}, ui)",
+                first.text,
+                snake(prop)
+            );
+            return self.fields(
+                file,
+                first.pos,
+                text,
+                pty.clone(),
+                rest.get(1..).unwrap_or(&[]),
+            );
+        }
         // An item: `parent` or an id, then a property of it.
         let item = if first.text == "parent" {
             match &scope.parent {
@@ -2631,26 +3027,22 @@ impl Program {
                 }
             }
             [name] => {
-                let Some((params, ret)) = scope.component.functions.get(*name) else {
+                if !scope.component.functions.contains_key(*name) {
                     return Err(diag(file, pos, &format!("`{name}` is not a function here")));
+                }
+                self.function_call(scope, scope.component, name, codes, scope.this, pos)?
+            }
+            [space, name]
+                if self
+                    .components
+                    .get(*space)
+                    .is_some_and(|c| c.singleton && c.functions.contains_key(*name)) =>
+            {
+                let Some(c) = self.components.get(*space) else {
+                    return Err(diag(file, pos, "no singleton"));
                 };
-                if params.len() != codes.len() {
-                    return Err(diag(
-                        file,
-                        pos,
-                        &format!("`{name}` takes {} arguments", params.len()),
-                    ));
-                }
-                let mut texts = Vec::new();
-                for (code, (_, ty)) in codes.into_iter().zip(params) {
-                    texts.push(text_of(code, ty)?);
-                }
-                let args: String = texts.iter().map(|t| format!(", {t}")).collect();
-                Code {
-                    text: format!("{}.{}(ui{args})", scope.this, snake(name)),
-                    ty: ret.clone(),
-                    reads: true,
-                }
+                let receiver = format!("{space}::instance(ui)");
+                self.function_call(scope, c, name, codes, &receiver, pos)?
             }
             _ => {
                 return Err(diag(
@@ -2661,6 +3053,61 @@ impl Program {
             }
         };
         Ok(code)
+    }
+}
+
+impl Program {
+    /// A call of `owner`'s function `name` on `receiver`, its missing
+    /// arguments given their defaults.
+    fn function_call(
+        &self,
+        scope: &Scope<'_>,
+        owner: &Component,
+        name: &str,
+        mut codes: Vec<Code>,
+        receiver: &str,
+        pos: Pos,
+    ) -> Result<Code, Diagnostic> {
+        let file = scope.file;
+        let Some((params, ret)) = owner.functions.get(name) else {
+            return Err(diag(file, pos, &format!("`{name}` is not a function here")));
+        };
+        let defaults = owner.defaults.get(name).cloned().unwrap_or_default();
+        if codes.len() > params.len() {
+            return Err(diag(
+                file,
+                pos,
+                &format!("`{name}` takes {} arguments", params.len()),
+            ));
+        }
+        for index in codes.len()..params.len() {
+            let Some(Some(default)) = defaults.get(index) else {
+                return Err(diag(
+                    file,
+                    pos,
+                    &format!("`{name}` takes {} arguments", params.len()),
+                ));
+            };
+            let code = self.expr(scope, default)?;
+            if code.reads {
+                return Err(diag(file, default.pos(), "a default is a constant"));
+            }
+            codes.push(code);
+        }
+        // The arguments are worked out first, each of them may read the
+        // `Ui` the call is then lent.
+        let mut lets = format!("let receiver = {receiver}; ");
+        let mut args = String::new();
+        for (index, (code, (_, ty))) in codes.into_iter().zip(params).enumerate() {
+            let text = coerce(file, pos, code, ty)?;
+            let _ = write!(lets, "let arg{index}: {} = {text}; ", ty.rust());
+            let _ = write!(args, ", arg{index}");
+        }
+        Ok(Code {
+            text: format!("{{ {lets}receiver.{}(ui{args}) }}", snake(name)),
+            ty: ret.clone(),
+            reads: true,
+        })
     }
 }
 
@@ -2872,5 +3319,53 @@ fn upper(name: &str) -> String {
     let mut chars = name.chars();
     chars.next().map_or_else(String::new, |first| {
         first.to_uppercase().chain(chars).collect()
+    })
+}
+
+/// An element as the walk gathers it: its local, its type, the element,
+/// what `parent` is in it, and the local of the element it is made under
+/// (`None` for the root).
+type Walked<'e> = (String, ElemTy, &'e Element, Option<Target>, Option<String>);
+
+/// The last part of a key: the name its declaration is written with.
+fn short(key: &str) -> &str {
+    key.rsplit("::").next().unwrap_or(key)
+}
+
+/// The Rust module a key's declaration is written in: `""` at the top.
+fn module_of(key: &str) -> &str {
+    key.rsplit_once("::").map_or("", |(module, _)| module)
+}
+
+/// Where a member starts, for a diagnostic.
+fn member_pos(member: &Member) -> Option<Pos> {
+    match member {
+        Member::Property { name, .. }
+        | Member::Function { name, .. }
+        | Member::Signal { name, .. }
+        | Member::Elements { name, .. } => Some(name.pos),
+        Member::Id(id) => Some(id.pos),
+        Member::Binding { path, .. } => path.first().map(|p| p.pos),
+        Member::Child(child) | Member::On { element: child, .. } => Some(child.kind.pos),
+        Member::Handler { signal, .. } => Some(signal.pos),
+    }
+}
+
+/// The element in `element`'s tree whose id is `id`, not looking into a
+/// `Repeater`'s or view's delegate, which is a tree of its own.
+fn find_id<'e>(element: &'e Element, id: &str, top: bool) -> Option<&'e Element> {
+    if element
+        .members
+        .iter()
+        .any(|m| matches!(m, Member::Id(name) if name.text == id))
+    {
+        return Some(element);
+    }
+    if !top && matches!(element.kind.text.as_str(), "Repeater" | "ListView") {
+        return None;
+    }
+    element.members.iter().find_map(|m| match m {
+        Member::Child(child) => find_id(child, id, false),
+        _ => None,
     })
 }

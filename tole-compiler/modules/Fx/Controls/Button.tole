@@ -1,0 +1,42 @@
+// A push button: a label, `clicked` on a click or on Space and Return
+// while it has the focus. `highlighted` is the window's one main action,
+// in the accent; `flat` has no edge until the pointer is over it.
+import Fx
+
+component Button : Rectangle {
+    id: control
+    property string text
+    property bool highlighted: false
+    property bool flat: false
+    property bool down: area.pressed
+    property bool hovered: area.containsMouse
+    signal clicked()
+
+    implicitWidth: max(label.implicitWidth + 28, 64)
+    implicitHeight: Theme.controlHeight
+    radius: Theme.radius
+    activeFocusOnTab: true
+    opacity: enabled ? 1 : 0.45
+    color: highlighted
+        ? (down ? alpha(Theme.accent, 0.8) : hovered ? alpha(Theme.accent, 0.9) : Theme.accent)
+        : (down ? Theme.line : hovered ? Theme.hover : flat ? "transparent" : Theme.bg)
+    border.width: activeFocus ? 2 : (flat || highlighted ? 0 : 1)
+    border.color: activeFocus ? (highlighted ? Theme.ink : Theme.accent) : Theme.line3
+
+    Keys.onSpacePressed: control.clicked()
+    Keys.onReturnPressed: control.clicked()
+
+    Text {
+        id: label
+        anchors.centerIn: parent
+        text: control.text
+        font: Theme.sans(13, 500)
+        color: control.highlighted ? Theme.onAccent : Theme.ink
+    }
+    MouseArea {
+        id: area
+        anchors.fill: parent
+        hoverEnabled: true
+        onClicked: control.clicked()
+    }
+}

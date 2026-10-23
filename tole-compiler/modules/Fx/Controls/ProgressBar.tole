@@ -1,0 +1,25 @@
+// How far something has gone: `value` from `from` to `to`.
+import Fx
+
+component ProgressBar : Rectangle {
+    id: control
+    property real from: 0
+    property real to: 1
+    property real value: 0
+    property real position: to > from ? clamp((value - from) / (to - from), 0, 1) : 0
+
+    implicitWidth: 200
+    implicitHeight: 6
+    radius: height / 2
+    color: Theme.bg3
+    border.width: 1
+    border.color: Theme.line
+
+    Rectangle {
+        height: parent.height
+        width: parent.width * control.position
+        visible: control.position > 0
+        radius: parent.radius
+        color: Theme.accent
+    }
+}

@@ -16,6 +16,11 @@ pub trait Element: Copy {
     fn id(&self) -> ItemId;
     /// Its common properties.
     fn common(&self) -> Common;
+    /// Where the children a use gives it go: the item itself, or for a
+    /// component with a `default property alias`, the item that names.
+    fn content(&self) -> ItemId {
+        self.id()
+    }
 }
 
 /// A handle with its kind's own properties.

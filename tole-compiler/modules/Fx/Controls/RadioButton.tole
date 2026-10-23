@@ -1,0 +1,55 @@
+// One of a choice: among the radio buttons beside it (the same parent),
+// checking one unchecks the others. Unchecked it is an outlined ring,
+// checked a filled one: an empty grey dot reads as disabled.
+import Fx
+
+component RadioButton : Item {
+    id: control
+    property string text
+    property bool checked: false
+    property bool hovered: area.containsMouse
+    signal toggled()
+
+    implicitWidth: row.implicitWidth
+    implicitHeight: max(row.implicitHeight, 22)
+    activeFocusOnTab: true
+    opacity: enabled ? 1 : 0.45
+    Exclusive.checked: checked
+
+    Keys.onSpacePressed: if (!checked) { checked = true; toggled() }
+
+    Row {
+        id: row
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: 8
+        Rectangle {
+            id: ring
+            width: 16; height: 16
+            radius: 8
+            anchors.verticalCenter: parent.verticalCenter
+            color: control.checked ? Theme.accent : Theme.bg
+            border.width: control.checked && !control.activeFocus ? 0 : (control.activeFocus ? 2 : 1.5)
+            border.color: control.activeFocus || control.hovered ? Theme.accent : Theme.ink4
+            Rectangle {
+                anchors.centerIn: parent
+                visible: control.checked
+                width: 6; height: 6
+                radius: 3
+                color: Theme.onAccent
+            }
+        }
+        Text {
+            visible: control.text != ""
+            anchors.verticalCenter: parent.verticalCenter
+            text: control.text
+            font: Theme.sans()
+            color: Theme.ink
+        }
+    }
+    MouseArea {
+        id: area
+        anchors.fill: parent
+        hoverEnabled: true
+        onClicked: if (!control.checked) { control.checked = true; control.toggled() }
+    }
+}
