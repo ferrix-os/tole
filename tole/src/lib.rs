@@ -22,6 +22,7 @@ mod flick;
 mod focus;
 mod folder;
 pub mod handles;
+pub mod image;
 mod input;
 mod item;
 mod layout;
@@ -47,6 +48,7 @@ pub use cpu::CpuRenderer;
 pub use focus::{KeyEvent, Nav};
 pub use folder::{FileEntry, expand_home};
 pub use handles::Element;
+pub use image::Image;
 pub use input::{Cursor, cursor_shape};
 pub use item::{
     CanvasProps, Common, FlickProps, FlowProps, FolderProps, GridProps, ItemId, Kind, KindName,

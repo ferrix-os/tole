@@ -289,6 +289,37 @@ impl Renderer for CpuRenderer<'_, '_> {
         }
     }
 
+    fn image(&mut self, rect: Rect, image: &crate::image::Image) {
+        let (w, h) = image.size();
+        if w == 0 || h == 0 || rect.w <= 0.0 || rect.h <= 0.0 {
+            return;
+        }
+        let Some(masked) = self.prepare_mask(rect) else {
+            return;
+        };
+        let s = self.scale;
+        let transform = Transform::from_row(
+            rect.w * s / w as f32,
+            0.0,
+            0.0,
+            rect.h * s / h as f32,
+            rect.x * s,
+            rect.y * s,
+        );
+        let paint = PixmapPaint {
+            quality: tiny_skia::FilterQuality::Bilinear,
+            ..PixmapPaint::default()
+        };
+        let mask = if masked {
+            self.clips.last().and_then(|clip| clip.mask.as_ref())
+        } else {
+            None
+        };
+        if let Some(mut target) = target(self.base, &mut self.layers) {
+            target.draw_pixmap(0, 0, image.pixmap().as_ref(), &paint, transform, mask);
+        }
+    }
+
     fn push_clip(&mut self, rect: Rect) {
         let rect = match self.clips.last() {
             Some(outer) => outer.rect.intersect(&rect),

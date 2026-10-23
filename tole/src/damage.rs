@@ -140,7 +140,9 @@ impl Scene {
 pub(crate) fn op_bounds(op: &DrawOp, scale: f32) -> Option<Rect> {
     let grow = |r: Rect, by: f32| Rect::new(r.x - by, r.y - by, r.w + 2.0 * by, r.h + 2.0 * by);
     match op {
-        DrawOp::Fill { rect, .. } | DrawOp::Stroke { rect, .. } => Some(grow(*rect, 1.0)),
+        DrawOp::Fill { rect, .. } | DrawOp::Stroke { rect, .. } | DrawOp::Image { rect, .. } => {
+            Some(grow(*rect, 1.0))
+        }
         DrawOp::Path { path, width, .. } => path.bounds().map(|b| grow(b, width / 2.0 + 1.0)),
         DrawOp::Text {
             run, x, baseline, ..

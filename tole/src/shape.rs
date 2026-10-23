@@ -363,6 +363,15 @@ impl Painter<'_> {
         self.path(&path, color, Color::TRANSPARENT, 0.0);
     }
 
+    /// `image` scaled into `rect`.
+    pub fn image(&mut self, rect: Rect, image: &crate::image::Image) {
+        let rect = self.place(rect);
+        self.ops.push(DrawOp::Image {
+            rect,
+            image: image.clone(),
+        });
+    }
+
     /// Cut what is painted next to `rect`, until [`Painter::pop_clip`].
     pub fn push_clip(&mut self, rect: Rect) {
         let rect = self.place(rect);

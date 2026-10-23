@@ -115,6 +115,13 @@ pub enum DrawOp {
         /// The stroke's width.
         width: f32,
     },
+    /// A picture, scaled into a rectangle.
+    Image {
+        /// Where.
+        rect: Rect,
+        /// The picture.
+        image: crate::image::Image,
+    },
     /// Cut what follows to a rectangle, inside any cut already made.
     PushClip(Rect),
     /// End the last cut.
@@ -135,6 +142,8 @@ pub trait Renderer {
     fn text(&mut self, run: &Run, x: f32, baseline: f32, color: Color);
     /// A path filled with `fill` and stroked `width` wide with `stroke`.
     fn path(&mut self, path: &crate::shape::Path, fill: Color, stroke: Color, width: f32);
+    /// `image` scaled into `rect`.
+    fn image(&mut self, rect: Rect, image: &crate::image::Image);
     /// Cut what follows to `rect`.
     fn push_clip(&mut self, rect: Rect);
     /// End the last cut.
@@ -173,6 +182,7 @@ pub fn play(ops: &[DrawOp], renderer: &mut dyn Renderer) {
                 stroke,
                 width,
             } => renderer.path(path, *fill, *stroke, *width),
+            DrawOp::Image { rect, image } => renderer.image(*rect, image),
             DrawOp::PushClip(rect) => renderer.push_clip(*rect),
             DrawOp::PopClip => renderer.pop_clip(),
             DrawOp::PushOpacity(opacity) => renderer.push_opacity(*opacity),

@@ -28,12 +28,16 @@ component CheckBox : Item {
             color: control.checked ? Theme.accent : Theme.bg
             border.width: control.checked && !control.activeFocus ? 0 : (control.activeFocus ? 2 : 1)
             border.color: control.activeFocus || control.hovered ? Theme.accent : Theme.ink4
-            Text {
-                anchors.centerIn: parent
+            // The tick is drawn, not a glyph: a face may not have one.
+            Shape {
                 visible: control.checked
-                text: "✓"
-                font: Theme.sans(12, 700)
-                color: Theme.onAccent
+                ShapePath {
+                    strokeColor: Theme.onAccent
+                    strokeWidth: 2
+                    startX: 4; startY: 8.5
+                    PathLine { x: 7; y: 11.5 }
+                    PathLine { x: 12; y: 5 }
+                }
             }
         }
         Text {

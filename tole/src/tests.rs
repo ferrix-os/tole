@@ -1860,3 +1860,27 @@ fn a_list_scrolled_before_it_is_laid_out_makes_only_its_screenful() {
     assert!(made <= 8, "{made} made");
     assert_eq!(shown_rows(&mut ui, view.id).first().unwrap().0, 50_000);
 }
+
+#[test]
+fn a_painter_draws_a_picture_scaled_into_its_place() {
+    let mut ui = ui();
+    let canvas = crate::handles::Canvas::new(&mut ui, None).unwrap();
+    canvas.common.width.set(&mut ui, 40.0);
+    canvas.common.height.set(&mut ui, 20.0);
+    // Two pixels: red, then blue.
+    let image = crate::Image::from_rgba(2, 1, &[255, 0, 0, 255, 0, 0, 255, 255]).unwrap();
+    assert_eq!(image.size(), (2, 1));
+    assert!(
+        crate::Image::from_rgba(2, 2, &[0; 8]).is_none(),
+        "the size and the pixels disagree"
+    );
+    canvas.props.painter.set(
+        &mut ui,
+        crate::CanvasPainter::new(move |p| p.image(crate::Rect::new(0.0, 0.0, 40.0, 20.0), &image)),
+    );
+    let frame = ui.render((40, 20), Color::hex(0xffffff)).unwrap();
+    let [r, _, b, _] = pixel(&frame, 2, 10);
+    assert!(r > 200 && b < 60, "red at the left: {r} {b}");
+    let [r, _, b, _] = pixel(&frame, 37, 10);
+    assert!(b > 200 && r < 60, "blue at the right: {r} {b}");
+}
