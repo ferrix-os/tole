@@ -80,7 +80,23 @@ pub(crate) enum Member {
         body: Expr,
     },
     /// `signal name(params)`.
-    Signal { name: Ident },
+    Signal {
+        name: Ident,
+        params: Vec<(Ident, Ident)>,
+    },
+    /// `onName: statements`.
+    Handler { signal: Ident, body: Vec<Stmt> },
+}
+
+/// A statement of a handler.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Stmt {
+    /// `a.b = expr`.
+    Assign(Vec<Ident>, Expr),
+    /// A call: a signal emitted or a function run.
+    Call(Expr),
+    /// `if (c) ... else ...`.
+    If(Expr, Vec<Stmt>, Vec<Stmt>),
 }
 
 /// An expression.
@@ -384,14 +400,22 @@ impl Parser<'_> {
         if self.at_word("signal") && matches!(self.peek2(), Tok::Ident(_)) {
             let _ = self.bump();
             let name = self.ident()?;
-            if matches!(self.peek(), Tok::Punct("(")) {
-                let _ = self.params()?;
-            }
-            return Ok(vec![Member::Signal { name }]);
+            let params = if matches!(self.peek(), Tok::Punct("(")) {
+                self.params()?
+            } else {
+                Vec::new()
+            };
+            return Ok(vec![Member::Signal { name, params }]);
         }
         let first = self.ident()?;
         if first.text == "id" && self.eat(":") {
             return Ok(vec![Member::Id(self.ident()?)]);
+        }
+        if let Some(signal) = handler_name(&first)
+            && self.eat(":")
+        {
+            let body = self.block()?;
+            return Ok(vec![Member::Handler { signal, body }]);
         }
         let starts_upper = first.text.chars().next().is_some_and(char::is_uppercase);
         if starts_upper && matches!(self.peek(), Tok::Punct("{") | Tok::Newline) {
@@ -424,6 +448,68 @@ impl Parser<'_> {
             path,
             expr: self.expr()?,
         }])
+    }
+
+    /// A handler's body: `{ statements }` or one statement.
+    fn block(&mut self) -> Result<Vec<Stmt>, Diagnostic> {
+        if !self.eat("{") {
+            return Ok(vec![self.statement()?]);
+        }
+        let mut body = Vec::new();
+        loop {
+            self.separators();
+            if self.eat("}") {
+                return Ok(body);
+            }
+            body.push(self.statement()?);
+        }
+    }
+
+    /// One statement.
+    fn statement(&mut self) -> Result<Stmt, Diagnostic> {
+        if self.at_word("if") {
+            let _ = self.bump();
+            self.expect("(")?;
+            let condition = self.expr()?;
+            self.expect(")")?;
+            self.newlines();
+            let yes = self.block()?;
+            let save = self.at;
+            self.separators();
+            let no = if self.at_word("else") {
+                let _ = self.bump();
+                self.newlines();
+                if self.at_word("if") {
+                    vec![self.statement()?]
+                } else {
+                    self.block()?
+                }
+            } else {
+                self.at = save;
+                Vec::new()
+            };
+            return Ok(Stmt::If(condition, yes, no));
+        }
+        let pos = self.pos();
+        let expr = self.expr()?;
+        if self.eat("=") {
+            let Expr::Path(path) = expr else {
+                return Err(Diagnostic {
+                    file: self.file.to_owned(),
+                    pos,
+                    message: "only a property can be assigned to".to_owned(),
+                });
+            };
+            return Ok(Stmt::Assign(path, self.expr()?));
+        }
+        if !matches!(expr, Expr::Call(..)) {
+            return Err(Diagnostic {
+                file: self.file.to_owned(),
+                pos,
+                message: "a statement is an assignment, a call or an `if`".to_owned(),
+            });
+        }
+        Ok(Stmt::Call(expr))
     }
 
     /// `(name: type, ...)`, or `(type name, ...)` as a QML signal writes it.
@@ -583,4 +669,15 @@ impl Parser<'_> {
             }
         }
     }
+}
+
+/// The signal `onName` handles: `name` with its first letter lowered.
+fn handler_name(word: &Ident) -> Option<Ident> {
+    let rest = word.text.strip_prefix("on")?;
+    let mut chars = rest.chars();
+    let first = chars.next().filter(|c| c.is_uppercase())?;
+    Some(Ident {
+        text: first.to_lowercase().chain(chars).collect(),
+        pos: word.pos,
+    })
 }

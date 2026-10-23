@@ -99,6 +99,87 @@ component Layouts : Rectangle {
 
 ![layouts](docs/screenshots/layouts.png)
 
+### Counter
+
+Signals and handlers. A button is a component with a `clicked` signal,
+and each use of it says what a click does; its colour is a binding on its
+`MouseArea`'s `pressed` and `containsMouse`. The picture is after three
+clicks on +1, with the pointer resting on Reset; the demo's script works
+the buttons through the same pointer calls a window feeds.
+
+```qml
+// Signals and handlers: a button is a component with a `clicked`
+// signal, and each use says what a click does. Its colour is a binding on
+// its MouseArea's `pressed` and `containsMouse`.
+import Fx
+
+component Button : Rectangle {
+    id: button
+    property string label
+    signal clicked()
+
+    width: caption.implicitWidth + 32
+    height: 36
+    radius: 8
+    color: area.pressed ? "#14306a" : area.containsMouse ? "#2a62c9" : "#555555"
+
+    Text {
+        id: caption
+        anchors.centerIn: parent
+        text: label
+        color: "white"
+        font: font("Inter", 14, 500)
+    }
+    MouseArea {
+        id: area
+        anchors.fill: parent
+        hoverEnabled: true
+        // `clicked()` alone would be the MouseArea's own, as in QML.
+        onClicked: button.clicked()
+    }
+}
+
+component Counter : Rectangle {
+    property int count
+    width: 420; height: 180
+    color: "#fafaf8"
+
+    Column {
+        anchors.centerIn: parent
+        spacing: 16
+        Text {
+            text: count == 1 ? "Clicked once" : "Clicked ${count} times"
+            font: font("Inter", 20, 600)
+            color: count >= 3 ? "#d2382b" : "#1a1a1a"
+        }
+        Row {
+            spacing: 8
+            Button { label: "+1"; onClicked: count = count + 1 }
+            Button { label: "−1"; onClicked: if (count > 0) { count = count - 1 } }
+            Button { label: "Reset"; onClicked: count = 0 }
+        }
+    }
+}
+```
+
+![counter](docs/screenshots/counter.png)
+
+The program's Rust is not called back: it reads what was emitted, after
+it hands the `Ui` an event, through an enum the compiler writes for each
+component that declares signals.
+
+```rust
+let button = Button::new(&mut ui, None)?;
+ui.pointer_move(x, y);
+ui.pointer_press();
+ui.pointer_release();
+for emitted in ui.take_signals() {
+    if let Some(ButtonSignal::Clicked) = button.signal(&emitted) {
+        // ...
+    }
+}
+```
+
 More come as the framework reaches them: controls, a 100,000-row list,
 states and transitions, the theme in light and dark, a chart, and the lode
 viewer ported onto tole.
@@ -106,7 +187,8 @@ viewer ported onto tole.
 ## Crates
 
 * **`tole`**: the runtime. Property cells and bindings with dependency
-  tracking, the item tree (`Item`, `Rectangle`, `Text`, `Row`, `Column`),
+  tracking, the item tree (`Item`, `Rectangle`, `Text`, `Row`, `Column`,
+  `MouseArea`), signals and handlers, the pointer's routing,
   anchors, the scene as drawing operations, the `Renderer` trait and the
   CPU renderer, typed handles for each kind of item, and `include_ui!` for
   the compiler's output.

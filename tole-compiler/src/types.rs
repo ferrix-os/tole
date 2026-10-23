@@ -101,6 +101,8 @@ pub(crate) enum Kind {
     Row,
     /// `Column`.
     Column,
+    /// `MouseArea`.
+    MouseArea,
 }
 
 impl Kind {
@@ -112,6 +114,7 @@ impl Kind {
             "Text" => Kind::Text,
             "Row" => Kind::Row,
             "Column" => Kind::Column,
+            "MouseArea" => Kind::MouseArea,
             _ => return None,
         })
     }
@@ -124,6 +127,7 @@ impl Kind {
             Kind::Text => "::tole::handles::Text",
             Kind::Row => "::tole::handles::Row",
             Kind::Column => "::tole::handles::Column",
+            Kind::MouseArea => "::tole::handles::MouseArea",
         }
     }
 
@@ -161,6 +165,29 @@ impl Kind {
             (Kind::Text, ["verticalAlignment"]) => Some((".props.vertical_alignment", Ty::VAlign)),
             (Kind::Row | Kind::Column, ["spacing"]) => Some((".props.spacing", Ty::Real)),
             (Kind::Row | Kind::Column, ["padding"]) => Some((".props.padding", Ty::Real)),
+            (Kind::MouseArea, ["enabled"]) => Some((".props.enabled", Ty::Bool)),
+            (Kind::MouseArea, ["hoverEnabled"]) => Some((".props.hover_enabled", Ty::Bool)),
+            (Kind::MouseArea, ["pressed"]) => Some((".props.pressed", Ty::Bool)),
+            (Kind::MouseArea, ["containsMouse"]) => Some((".props.contains_mouse", Ty::Bool)),
+            (Kind::MouseArea, ["mouseX"]) => Some((".props.mouse_x", Ty::Real)),
+            (Kind::MouseArea, ["mouseY"]) => Some((".props.mouse_y", Ty::Real)),
+            _ => None,
+        }
+    }
+
+    /// The signal `name` on it: the Rust path from the handle, and its
+    /// parameters.
+    pub(crate) fn signal(
+        self,
+        name: &str,
+    ) -> Option<(&'static str, &'static [(&'static str, Ty)])> {
+        match (self, name) {
+            (Kind::MouseArea, "clicked") => Some((".props.clicked", &[])),
+            (Kind::MouseArea, "pressed") => Some((".props.on_pressed", &[])),
+            (Kind::MouseArea, "released") => Some((".props.released", &[])),
+            (Kind::MouseArea, "entered") => Some((".props.entered", &[])),
+            (Kind::MouseArea, "exited") => Some((".props.exited", &[])),
+            (Kind::MouseArea, "wheel") => Some((".props.wheel", &[("delta", Ty::Real)])),
             _ => None,
         }
     }

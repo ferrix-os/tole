@@ -1,0 +1,52 @@
+// Signals and handlers: a button is a component with a `clicked`
+// signal, and each use says what a click does. Its colour is a binding on
+// its MouseArea's `pressed` and `containsMouse`.
+import Fx
+
+component Button : Rectangle {
+    id: button
+    property string label
+    signal clicked()
+
+    width: caption.implicitWidth + 32
+    height: 36
+    radius: 8
+    color: area.pressed ? "#14306a" : area.containsMouse ? "#2a62c9" : "#555555"
+
+    Text {
+        id: caption
+        anchors.centerIn: parent
+        text: label
+        color: "white"
+        font: font("Inter", 14, 500)
+    }
+    MouseArea {
+        id: area
+        anchors.fill: parent
+        hoverEnabled: true
+        // `clicked()` alone would be the MouseArea's own, as in QML.
+        onClicked: button.clicked()
+    }
+}
+
+component Counter : Rectangle {
+    property int count
+    width: 420; height: 180
+    color: "#fafaf8"
+
+    Column {
+        anchors.centerIn: parent
+        spacing: 16
+        Text {
+            text: count == 1 ? "Clicked once" : "Clicked ${count} times"
+            font: font("Inter", 20, 600)
+            color: count >= 3 ? "#d2382b" : "#1a1a1a"
+        }
+        Row {
+            spacing: 8
+            Button { label: "+1"; onClicked: count = count + 1 }
+            Button { label: "−1"; onClicked: if (count > 0) { count = count - 1 } }
+            Button { label: "Reset"; onClicked: count = 0 }
+        }
+    }
+}

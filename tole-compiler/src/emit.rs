@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 
-use crate::parser::{Decl, Element, Expr, File, Ident, Member, StrPart};
+use crate::parser::{Decl, Element, Expr, File, Ident, Member, Stmt, StrPart};
 use crate::types::{Kind, Ty, builtin_constant, named_color, snake};
 use crate::{Diagnostic, Pos};
 
@@ -36,6 +36,8 @@ struct Component {
     props: Vec<(String, Ty)>,
     /// Its functions: parameters and result.
     functions: BTreeMap<String, (Vec<(String, Ty)>, Ty)>,
+    /// Its signals and their parameters, in order.
+    signals: Vec<(String, Vec<(String, Ty)>)>,
 }
 
 /// The whole program.
@@ -149,8 +151,16 @@ impl Program {
                 if let Decl::Component { name, root } = decl {
                     let mut props = Vec::new();
                     let mut functions = BTreeMap::new();
+                    let mut signals = Vec::new();
                     for member in &root.members {
                         match member {
+                            Member::Signal { name, params } => {
+                                let mut typed = Vec::new();
+                                for (param, ty) in params {
+                                    typed.push((param.text.clone(), program.ty(file, ty)?));
+                                }
+                                signals.push((name.text.clone(), typed));
+                            }
                             Member::Property { name, ty, .. } => {
                                 if props.iter().any(|(n, _): &(String, Ty)| *n == name.text) {
                                     return Err(diag(
@@ -184,6 +194,7 @@ impl Program {
                         base,
                         props,
                         functions,
+                        signals,
                     };
                     let _ = program.components.insert(name.text.clone(), component);
                 }
@@ -298,6 +309,9 @@ impl Program {
         for (prop, ty) in &c.props {
             let _ = writeln!(out, "    pub {}: ::tole::Prop<{}>,", snake(prop), ty.rust());
         }
+        for (signal, _) in &c.signals {
+            let _ = writeln!(out, "    pub {}: ::tole::SignalId,", snake(signal));
+        }
         out.push_str("}\n\n");
 
         // Every element in tree order, with its local and its parent's.
@@ -327,9 +341,16 @@ impl Program {
         for (prop, ty) in &c.props {
             let _ = writeln!(
                 out,
-                "            {}: ui.prop(<{} as ::tole::PropType>::fallback()),",
+                "            {}: ui.own_prop(::tole::Element::id(&base), <{} as ::tole::PropType>::fallback()),",
                 snake(prop),
                 ty.rust()
+            );
+        }
+        for (signal, _) in &c.signals {
+            let _ = writeln!(
+                out,
+                "            {}: ui.own_signal(::tole::Element::id(&base)),",
+                snake(signal)
             );
         }
         out.push_str("        };\n");
@@ -394,7 +415,53 @@ impl Program {
                 );
             }
         }
+        if !c.signals.is_empty() {
+            let _ = writeln!(
+                out,
+                "    /// Which of this component's signals `emitted` is, with its arguments.\n    pub fn signal(&self, emitted: &::tole::Emitted) -> ::core::option::Option<{name}Signal> {{"
+            );
+            for (signal, params) in &c.signals {
+                let decode: Vec<String> = params
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (_, ty))| {
+                        format!(
+                            "<{} as ::tole::PropType>::from_value(emitted.args.get({index})?)?",
+                            ty.rust()
+                        )
+                    })
+                    .collect();
+                let fields = if decode.is_empty() {
+                    String::new()
+                } else {
+                    format!("({})", decode.join(", "))
+                };
+                let _ = writeln!(
+                    out,
+                    "        if emitted.signal == self.{} {{\n            return ::core::option::Option::Some({name}Signal::{}{fields});\n        }}",
+                    snake(signal),
+                    upper(signal)
+                );
+            }
+            out.push_str("        ::core::option::Option::None\n    }\n");
+        }
         out.push_str("}\n\n");
+        if !c.signals.is_empty() {
+            let _ = writeln!(
+                out,
+                "#[derive(Clone, Debug, PartialEq)]\npub enum {name}Signal {{"
+            );
+            for (signal, params) in &c.signals {
+                let types: Vec<String> = params.iter().map(|(_, ty)| ty.rust()).collect();
+                let fields = if types.is_empty() {
+                    String::new()
+                } else {
+                    format!("({})", types.join(", "))
+                };
+                let _ = writeln!(out, "    {}{fields},", upper(signal));
+            }
+            out.push_str("}\n\n");
+        }
         let _ = writeln!(
             out,
             "impl ::tole::Element for {name} {{\n    fn id(&self) -> ::tole::ItemId {{\n        ::tole::Element::id(&self.base)\n    }}\n    fn common(&self) -> ::tole::Common {{\n        ::tole::Element::common(&self.base)\n    }}\n}}\n"
@@ -426,13 +493,6 @@ impl Program {
                     &format!("the id `{}` is given twice", id.text),
                 ));
             }
-            if let Member::Signal { name } = member {
-                return Err(diag(
-                    file,
-                    name.pos,
-                    "signals come with input, in the next step (U3)",
-                ));
-            }
         }
         out.push((var.clone(), ty.clone(), element, parent));
         for member in &element.members {
@@ -454,11 +514,14 @@ impl Program {
                     }
                 };
                 for inner in &child.members {
-                    if let Member::Property { name, .. } | Member::Function { name, .. } = inner {
+                    if let Member::Property { name, .. }
+                    | Member::Function { name, .. }
+                    | Member::Signal { name, .. } = inner
+                    {
                         return Err(diag(
                             file,
                             name.pos,
-                            "properties and functions are declared on a component's root",
+                            "properties, functions and signals are declared on a component's root",
                         ));
                     }
                 }
@@ -493,6 +556,243 @@ impl Program {
                     .map(|(rust, ty)| (format!(".base{rust}"), ty))
             }
         }
+    }
+
+    /// The signal `name` on an element of type `ty`: the Rust path from
+    /// its handle, and its parameters.
+    fn signal(&self, ty: &ElemTy, name: &str) -> Option<(String, Vec<(String, Ty)>)> {
+        match ty {
+            ElemTy::Kind(kind) => kind.signal(name).map(|(rust, params)| {
+                (
+                    rust.to_owned(),
+                    params
+                        .iter()
+                        .map(|(p, t)| ((*p).to_owned(), t.clone()))
+                        .collect(),
+                )
+            }),
+            ElemTy::Component(component) => {
+                let c = self.components.get(component)?;
+                if let Some((_, params)) = c.signals.iter().find(|(s, _)| s == name) {
+                    return Some((format!(".{}", snake(name)), params.clone()));
+                }
+                self.signal(&c.base, name)
+                    .map(|(rust, params)| (format!(".base{rust}"), params))
+            }
+        }
+    }
+
+    /// `onName: ...` on the element in `var`: a closure connected to the
+    /// signal, its arguments as locals by their parameters' names.
+    fn handler(
+        &self,
+        scope: &Scope<'_>,
+        var: &str,
+        ty: &ElemTy,
+        signal: &Ident,
+        body: &[Stmt],
+    ) -> Result<String, Diagnostic> {
+        let file = scope.file;
+        let (rust, params) = self.signal(ty, &signal.text).ok_or_else(|| {
+            diag(
+                file,
+                signal.pos,
+                &format!("{} has no signal `{}`", describe(ty), signal.text),
+            )
+        })?;
+        let mut locals = String::new();
+        for (index, (param, pty)) in params.iter().enumerate() {
+            let _ = write!(
+                locals,
+                "let {}: {} = args.get({index}).and_then(<{} as ::tole::PropType>::from_value).unwrap_or_else(<{} as ::tole::PropType>::fallback); ",
+                snake(param),
+                pty.rust(),
+                pty.rust(),
+                pty.rust()
+            );
+        }
+        let inner = Scope {
+            component: scope.component,
+            this: scope.this,
+            ids: scope.ids,
+            current: scope.current.clone(),
+            parent: scope.parent.clone(),
+            params: &params,
+            file,
+        };
+        if let Some(own) = body.iter().find_map(|statement| match statement {
+            Stmt::Call(Expr::Call(path, _, pos)) => self
+                .emitted(&inner, path)
+                .filter(|(emits, _)| *emits == format!("{var}{rust}"))
+                .map(|_| *pos),
+            _ => None,
+        }) {
+            return Err(diag(
+                file,
+                own,
+                &format!(
+                    "this handler emits the `{}` it handles, again and again: name the component's root by its id (`root.{}()`)",
+                    signal.text, signal.text
+                ),
+            ));
+        }
+        let statements = self.statements(&inner, body)?;
+        Ok(format!(
+            "        ui.connect({var}{rust}, ::std::rc::Rc::new(move |ui: &mut ::tole::Ui, args: &[::tole::Value]| {{ let _ = args; {locals}{statements}}}));\n"
+        ))
+    }
+
+    /// A handler's statements.
+    fn statements(&self, scope: &Scope<'_>, body: &[Stmt]) -> Result<String, Diagnostic> {
+        let file = scope.file;
+        let mut out = String::new();
+        for statement in body {
+            match statement {
+                Stmt::Assign(path, expr) => {
+                    let (prop, want) = self.lvalue(scope, path)?;
+                    let code = self.expr_want(scope, expr, Some(&want))?;
+                    let text = coerce(file, expr.pos(), code, &want)?;
+                    let _ = write!(
+                        out,
+                        "{{ let value = {text}; ::tole::Prop::set({prop}, ui, value); }} "
+                    );
+                }
+                Stmt::Call(Expr::Call(path, args, pos)) => {
+                    if let Some((signal, params)) = self.emitted(scope, path) {
+                        if params.len() != args.len() {
+                            return Err(diag(
+                                file,
+                                *pos,
+                                &format!("this signal takes {} arguments", params.len()),
+                            ));
+                        }
+                        let mut values = Vec::new();
+                        for (arg, (_, want)) in args.iter().zip(&params) {
+                            let code = self.expr_want(scope, arg, Some(want))?;
+                            let text = coerce(file, arg.pos(), code, want)?;
+                            values.push(format!(
+                                "<{} as ::tole::PropType>::into_value({text})",
+                                want.rust()
+                            ));
+                        }
+                        let _ = write!(
+                            out,
+                            "{{ let args = ::std::vec![{}]; ui.emit({signal}, args); }} ",
+                            values.join(", ")
+                        );
+                    } else {
+                        let code = self.call(scope, path, args, *pos)?;
+                        let _ = write!(out, "let _ = {}; ", code.text);
+                    }
+                }
+                Stmt::Call(other) => {
+                    return Err(diag(
+                        file,
+                        other.pos(),
+                        "a statement is an assignment, a call or an `if`",
+                    ));
+                }
+                Stmt::If(condition, yes, no) => {
+                    let code = self.expr(scope, condition)?;
+                    if code.ty != Ty::Bool {
+                        return Err(diag(file, condition.pos(), "a condition is a bool"));
+                    }
+                    let _ = write!(
+                        out,
+                        "if {} {{ {}}} else {{ {}}} ",
+                        code.text,
+                        self.statements(scope, yes)?,
+                        self.statements(scope, no)?
+                    );
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// The signal a call statement emits, if it names one: `name()` on the
+    /// element or the component, or `id.name()`, `parent.name()`.
+    fn emitted(&self, scope: &Scope<'_>, path: &[Ident]) -> Option<(String, Vec<(String, Ty)>)> {
+        match path {
+            [name] => {
+                let root = (
+                    scope.this.to_owned(),
+                    ElemTy::Component(component_name(self, scope.component)),
+                );
+                for (var, ty) in [scope.current.clone(), Some(root)].into_iter().flatten() {
+                    if let Some((rust, params)) = self.signal(&ty, &name.text) {
+                        return Some((format!("{var}{rust}"), params));
+                    }
+                }
+                None
+            }
+            [item, name] => {
+                let (var, ty) = if item.text == "parent" {
+                    match &scope.parent {
+                        Some(Target::Static(var, ty)) => (var.clone(), ty.clone()),
+                        _ => return None,
+                    }
+                } else {
+                    scope.ids.get(&item.text).cloned()?
+                };
+                self.signal(&ty, &name.text)
+                    .map(|(rust, params)| (format!("{var}{rust}"), params))
+            }
+            _ => None,
+        }
+    }
+
+    /// The property an assignment sets: the Rust path to its `Prop`, and
+    /// its type.
+    fn lvalue(&self, scope: &Scope<'_>, path: &[Ident]) -> Result<(String, Ty), Diagnostic> {
+        let file = scope.file;
+        let Some(first) = path.first() else {
+            return Err(diag(file, Pos { line: 0, column: 0 }, "an empty name"));
+        };
+        let names: Vec<&str> = path.iter().map(|p| p.text.as_str()).collect();
+        let rest = names.get(1..).unwrap_or(&[]);
+        let item = if first.text == "parent" {
+            match &scope.parent {
+                Some(Target::Static(var, ty)) => Some((var.clone(), ty.clone())),
+                _ => {
+                    return Err(diag(
+                        file,
+                        first.pos,
+                        "a component's root cannot set its parent's properties",
+                    ));
+                }
+            }
+        } else {
+            scope.ids.get(&first.text).cloned()
+        };
+        let found = match item {
+            Some((var, ty)) => self
+                .property(&ty, rest)
+                .map(|(rust, pty)| (format!("{var}{rust}"), pty)),
+            None => {
+                let root = (
+                    scope.this.to_owned(),
+                    ElemTy::Component(component_name(self, scope.component)),
+                );
+                [scope.current.clone(), Some(root)]
+                    .into_iter()
+                    .flatten()
+                    .find_map(|(var, ty)| {
+                        self.property(&ty, &names)
+                            .map(|(rust, pty)| (format!("{var}{rust}"), pty))
+                    })
+            }
+        };
+        found.ok_or_else(|| {
+            diag(
+                file,
+                first.pos,
+                &format!(
+                    "`{}` is not a property that can be set here",
+                    names.join(".")
+                ),
+            )
+        })
     }
 
     /// An element's members: values and bindings, then anchors.
@@ -539,6 +839,10 @@ impl Program {
                         .map(|(_, t)| t.clone());
                     let Some(ty) = ty else { continue };
                     ((format!(".{}", snake(&name.text)), ty), expr, name.pos)
+                }
+                Member::Handler { signal, body } => {
+                    out.push_str(&self.handler(scope, var, ty, signal, body)?);
+                    continue;
                 }
                 _ => continue,
             };
@@ -1363,4 +1667,12 @@ impl OrDefaultFn for Option<(Vec<(String, Ty)>, Ty)> {
     fn unwrap_or_default_fn(self) -> (Vec<(String, Ty)>, Ty) {
         self.unwrap_or((Vec::new(), Ty::Bool))
     }
+}
+
+/// `lineActivated` as `LineActivated`.
+fn upper(name: &str) -> String {
+    let mut chars = name.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
 }

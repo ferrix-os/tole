@@ -167,10 +167,6 @@ fn bad_markup_is_refused_where_it_is() {
         "1:25: `nothing` is not an id, a property or a type here"
     );
     assert_eq!(
-        refused("component A : Item { signal clicked() }"),
-        "1:29: signals come with input, in the next step (U3)"
-    );
-    assert_eq!(
         refused("component A : Item {\n  x: \"open"),
         "2:6: a string is not closed on its line"
     );
@@ -188,5 +184,83 @@ fn bad_markup_is_refused_where_it_is() {
 fn an_expression_may_go_on_over_lines() {
     let _ = accepted(
         "component A : Item {\n    property bool wide\n    width: wide\n        ? 200\n        : 100\n    height: 10 +\n        20\n}",
+    );
+}
+
+#[test]
+fn signals_handlers_and_their_statements() {
+    let rust = accepted(
+        r##"
+component Chip : Rectangle {
+    property string text
+    property int clicks
+    signal removed()
+    signal picked(int index, string name)
+    MouseArea {
+        id: area
+        hoverEnabled: true
+        onClicked: {
+            clicks = clicks + 1
+            if (clicks > 2) { removed() } else { picked(clicks, text) }
+        }
+        onWheel: parent.radius = delta
+    }
+    color: area.containsMouse ? "#eeeeee" : "white"
+}
+component Bar : Row {
+    property string last
+    Chip { id: chip; onPicked: last = name + index }
+}
+"##,
+    );
+    assert!(rust.contains("pub removed: ::tole::SignalId,"), "{rust}");
+    assert!(rust.contains("removed: ui.own_signal(::tole::Element::id(&base)),"));
+    assert!(rust.contains("ui.connect(e1.props.clicked, ::std::rc::Rc::new(move |ui: &mut ::tole::Ui, args: &[::tole::Value]|"), "{rust}");
+    assert!(rust.contains("{ let value = (ui.get(this.clicks)).wrapping_add(1_i32); ::tole::Prop::set(this.clicks, ui, value); }"), "{rust}");
+    assert!(rust.contains("{ let args = ::std::vec![]; ui.emit(this.removed, args); }"));
+    assert!(rust.contains("{ let args = ::std::vec![<i32 as ::tole::PropType>::into_value(ui.get(this.clicks)), <::std::rc::Rc<str> as ::tole::PropType>::into_value(ui.get(this.text))]; ui.emit(this.picked, args); }"), "{rust}");
+    assert!(rust.contains("let delta: f32 = args.get(0)"), "{rust}");
+    assert!(
+        rust.contains(
+            "{ let value = delta; ::tole::Prop::set(this.base.props.radius, ui, value); }"
+        ),
+        "{rust}"
+    );
+    // The program's side: which signal, with its arguments.
+    assert!(
+        rust.contains(
+            "pub enum ChipSignal {\n    Removed,\n    Picked(i32, ::std::rc::Rc<str>),\n}"
+        ),
+        "{rust}"
+    );
+    assert!(rust.contains(
+        "pub fn signal(&self, emitted: &::tole::Emitted) -> ::core::option::Option<ChipSignal>"
+    ));
+    // A handler on an instance, its parameters by name.
+    assert!(rust.contains("ui.connect(e1.picked,"), "{rust}");
+    assert!(rust.contains("let name: ::std::rc::Rc<str> = args.get(1)"));
+}
+
+#[test]
+fn bad_handlers_are_refused() {
+    assert_eq!(
+        refused("component A : Item { onClicked: x = 1 }"),
+        "1:22: A has no signal `clicked`"
+    );
+    assert_eq!(
+        refused("component A : Item { MouseArea { onClicked: 3 } }"),
+        "1:45: a statement is an assignment, a call or an `if`"
+    );
+    assert_eq!(
+        refused("component A : Item { MouseArea { onClicked: width = \"x\" } }"),
+        "1:53: a real was expected, and this is a string"
+    );
+    assert_eq!(
+        refused("component A : Item { signal s(int n)\n MouseArea { onClicked: s() } }"),
+        "2:25: this signal takes 1 arguments"
+    );
+    assert_eq!(
+        refused("component A : Item { signal clicked()\n MouseArea { onClicked: clicked() } }"),
+        "2:25: this handler emits the `clicked` it handles, again and again: name the component's root by its id (`root.clicked()`)"
     );
 }
