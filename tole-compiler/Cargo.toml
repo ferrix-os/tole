@@ -1,0 +1,19 @@
+[package]
+name = "tole-compiler"
+description = "tole's markup compiler: .tole files parsed, type-checked and written out as Rust at build time (docs/UI-FRAMEWORK.md §3.3)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "tole_compiler"
+path = "src/lib.rs"
+
+# No dependencies: a build dependency of every program that uses tole, so it
+# stays quick to build and adds nothing to the program itself.
+[dependencies]
+
+[lints]
+workspace = true

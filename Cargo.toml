@@ -10,7 +10,7 @@
 # Ferrix's compositor out beside it.
 [workspace]
 resolver = "3"
-members = ["tole"]
+members = ["tole", "tole-compiler"]
 
 [workspace.package]
 version = "0.1.0"
