@@ -2,6 +2,8 @@
 //! §3.1) as one enum the property cells store, and the Rust types each one
 //! is read and written as.
 
+use std::any::Any;
+use std::fmt;
 use std::rc::Rc;
 
 /// A colour, not premultiplied, as the markup writes it (`#rrggbb`,
@@ -116,7 +118,7 @@ pub enum VAlign {
 }
 
 /// A property's value.
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, Default)]
 pub enum Value {
     /// Nothing yet: a property whose binding has not run, or one read
     /// after its item was destroyed.
@@ -140,6 +142,62 @@ pub enum Value {
     HAlign(HAlign),
     /// `Text.verticalAlignment`.
     VAlign(VAlign),
+    /// A type the markup declared: a `struct` or an `enum`, as the Rust
+    /// type the compiler generated for it.
+    Custom(Rc<dyn CustomValue>),
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Void, Value::Void) => true,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::Int(a), Value::Int(b)) => a == b,
+            (Value::Real(a), Value::Real(b)) => a == b,
+            (Value::Str(a), Value::Str(b)) => a == b,
+            (Value::Color(a), Value::Color(b)) => a == b,
+            (Value::Font(a), Value::Font(b)) => a == b,
+            (Value::Elide(a), Value::Elide(b)) => a == b,
+            (Value::HAlign(a), Value::HAlign(b)) => a == b,
+            (Value::VAlign(a), Value::VAlign(b)) => a == b,
+            (Value::Custom(a), Value::Custom(b)) => a.same(b.as_ref()),
+            _ => false,
+        }
+    }
+}
+
+impl Value {
+    /// `value` as a [`Value::Custom`].
+    pub fn custom<T: Any + fmt::Debug + PartialEq>(value: T) -> Self {
+        Value::Custom(Rc::new(value))
+    }
+
+    /// The value inside a [`Value::Custom`], when it is a `T`.
+    #[must_use]
+    pub fn downcast<T: Any>(&self) -> Option<&T> {
+        match self {
+            Value::Custom(inner) => inner.as_any().downcast_ref::<T>(),
+            _ => None,
+        }
+    }
+}
+
+/// A value of a type the markup declared, held behind [`Value::Custom`].
+pub trait CustomValue: fmt::Debug {
+    /// As [`Any`], to be read back as its own type.
+    fn as_any(&self) -> &dyn Any;
+    /// Whether `other` is the same type and equal.
+    fn same(&self, other: &dyn CustomValue) -> bool;
+}
+
+impl<T: Any + fmt::Debug + PartialEq> CustomValue for T {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn same(&self, other: &dyn CustomValue) -> bool {
+        other.as_any().downcast_ref::<T>() == Some(self)
+    }
 }
 
 /// A Rust type a property is read and written as.

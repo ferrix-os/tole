@@ -15,6 +15,7 @@
 //! [`Ui::anchor`].
 
 mod cpu;
+pub mod handles;
 mod item;
 mod layout;
 pub mod png;
@@ -24,11 +25,35 @@ mod ui;
 mod value;
 
 pub use cpu::CpuRenderer;
+pub use handles::Element;
 pub use item::{Common, ItemId, Kind, KindName, PositionerProps, RectangleProps, TextProps};
 pub use layout::{Anchors, Line};
 pub use render::{DrawOp, Rect, Renderer, play};
 pub use ui::{Prop, PropId, Ui};
-pub use value::{Color, Elide, Font, HAlign, PropType, VAlign, Value};
+pub use value::{Color, CustomValue, Elide, Font, HAlign, PropType, VAlign, Value};
+
+/// The Rust the compiler generated from the program's `.tole` files
+/// (`tole_compiler::build` in its `build.rs`), as a module of its own whose
+/// items are used here.
+#[macro_export]
+macro_rules! include_ui {
+    () => {
+        #[allow(
+            dead_code,
+            unused,
+            unreachable_pub,
+            missing_docs,
+            unused_qualifications,
+            clippy::all,
+            clippy::pedantic,
+            reason = "code tole-compiler generated from the .tole files"
+        )]
+        mod tole_generated {
+            include!(concat!(env!("OUT_DIR"), "/tole_ui.rs"));
+        }
+        pub use tole_generated::*;
+    };
+}
 
 /// The fonts, for a program that makes its own [`Ui`].
 pub use compositor_text::Fonts;

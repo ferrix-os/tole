@@ -460,3 +460,78 @@ fn a_frame_is_a_png() {
         "straight alpha again"
     );
 }
+
+#[test]
+fn handles_make_items_of_their_kind() {
+    use crate::Element;
+    let mut ui = bare();
+    let column = crate::handles::Column::new(&mut ui, None).unwrap();
+    let rect = crate::handles::Rectangle::new(&mut ui, Some(column.id())).unwrap();
+    let label = crate::handles::Text::new(&mut ui, Some(column.id)).unwrap();
+    assert_eq!(ui.children(column.id), [rect.id, label.id]);
+    rect.common().height.set(&mut ui, 12.0);
+    column.props.spacing.set(&mut ui, 3.0);
+    assert_eq!(label.common.y.get(&mut ui), 15.0);
+    let root = ui.roots()[0];
+    assert!(crate::handles::Text::new(&mut ui, Some(root)).is_some());
+    ui.destroy(column.id);
+    assert!(
+        crate::handles::Item::new(&mut ui, Some(column.id)).is_none(),
+        "no item under a destroyed parent"
+    );
+}
+
+#[test]
+fn a_declared_type_is_a_property_value() {
+    #[derive(Clone, Debug, Default, PartialEq)]
+    struct Line {
+        level: i32,
+        text: String,
+    }
+    impl crate::PropType for Line {
+        fn into_value(self) -> crate::Value {
+            crate::Value::custom(self)
+        }
+        fn from_value(value: &crate::Value) -> Option<Self> {
+            value.downcast::<Self>().cloned()
+        }
+        fn fallback() -> Self {
+            Self::default()
+        }
+    }
+    let mut ui = bare();
+    let line = ui.prop(Line {
+        level: 3,
+        text: "err".to_owned(),
+    });
+    let level = ui.prop(0_i32);
+    let runs = Rc::new(Cell::new(0));
+    let counted = Rc::clone(&runs);
+    level.bind(&mut ui, move |ui| {
+        counted.set(counted.get() + 1);
+        ui.get(line).level
+    });
+    assert_eq!(level.get(&mut ui), 3);
+    line.set(
+        &mut ui,
+        Line {
+            level: 3,
+            text: "err".to_owned(),
+        },
+    );
+    assert_eq!(level.get(&mut ui), 3);
+    assert_eq!(runs.get(), 1, "an equal value changes nothing");
+    line.set(
+        &mut ui,
+        Line {
+            level: 4,
+            text: "warn".to_owned(),
+        },
+    );
+    assert_eq!(level.get(&mut ui), 4);
+    assert_ne!(
+        crate::Value::custom(1_u8),
+        crate::Value::custom(1_u16),
+        "types differ"
+    );
+}
