@@ -333,6 +333,20 @@ fn zone_offset() -> i64 {
     offset
 }
 
+/// The local zone's offset from UTC in seconds (its standard time; 0
+/// while a test fixed the clock): what a program writing a local date
+/// adds to the clock.
+#[must_use]
+pub fn local_offset() -> i64 {
+    zone_offset()
+}
+
+/// The year, month and day of `days` since 1970-01-01.
+#[must_use]
+pub fn civil_date(days: i64) -> (i64, u32, u32) {
+    civil(days)
+}
+
 /// The standard offset of a POSIX `TZ` string (`CET-1CEST,...`): east
 /// of Greenwich positive, as seconds to add to UTC.
 fn posix_offset(tz: &str) -> Option<i64> {

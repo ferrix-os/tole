@@ -76,6 +76,8 @@ pub(crate) struct Input {
     last_press: Option<(f64, f32, f32, u32)>,
     /// Whether Shift is held, as the window says.
     shift: bool,
+    /// Whether Control is held, as the window says.
+    control: bool,
     /// The popup being hit-tested now, over the rest.
     pub(crate) overlay: Option<ItemId>,
     /// The shape it has now.
@@ -113,6 +115,19 @@ impl Ui {
     /// the selection.
     pub fn set_shift(&mut self, held: bool) {
         self.input.shift = held;
+    }
+
+    /// Whether Shift and Control are held, as the window says.
+    pub fn set_modifiers(&mut self, shift: bool, control: bool) {
+        self.input.shift = shift;
+        self.input.control = control;
+    }
+
+    /// Whether Shift and Control were held, as last said: what a program
+    /// reads when a click comes, to add to a selection or stretch it.
+    #[must_use]
+    pub fn modifiers(&self) -> (bool, bool) {
+        (self.input.shift, self.input.control)
     }
 
     /// The button went down.

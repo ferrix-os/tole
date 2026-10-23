@@ -602,7 +602,9 @@ impl Window {
             KeyboardEvent::Leave(surface) if *surface == self.surface => {
                 ui.set_window_active(false);
             }
-            KeyboardEvent::Modifiers(modifiers) => ui.set_shift(modifiers.shift),
+            KeyboardEvent::Modifiers(modifiers) => {
+                ui.set_modifiers(modifiers.shift, modifiers.control);
+            }
             KeyboardEvent::Key(key) if key.surface.is_none_or(|s| s == self.surface) => {
                 if key.pressed {
                     self.key_serial = key.serial;
