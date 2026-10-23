@@ -104,6 +104,10 @@ pub(crate) struct Cell {
     readers: Vec<PropId>,
     /// What its binding read the last time it ran.
     deps: Vec<PropId>,
+    /// Where setting it or binding it goes instead: a state's or a
+    /// `Behavior`'s cell in front of it holds what it was given
+    /// (`Ui::divert`).
+    redirect: Option<PropId>,
 }
 
 impl fmt::Debug for Cell {
@@ -151,6 +155,8 @@ pub struct Ui {
     effects: Vec<(ItemId, Effect)>,
     /// Whether [`Ui::update`] is running.
     updating: bool,
+    /// The animations' clock.
+    pub(crate) clock: crate::anim::Clock,
 }
 
 /// Work done when the `Ui` updates, rather than when a property is read:
@@ -195,6 +201,7 @@ impl Ui {
             focus: crate::focus::Focus::default(),
             effects: Vec::new(),
             updating: false,
+            clock: crate::anim::Clock::default(),
         };
         ui.scale = ui.prop(1.0_f32);
         ui
@@ -307,6 +314,7 @@ impl Ui {
             cell.value = value;
             cell.dirty = false;
             cell.busy = false;
+            cell.redirect = None;
             return PropId {
                 index,
                 generation: cell.generation,
@@ -322,6 +330,7 @@ impl Ui {
             busy: false,
             readers: Vec::new(),
             deps: Vec::new(),
+            redirect: None,
         });
         PropId {
             index,
@@ -336,6 +345,7 @@ impl Ui {
         let readers = match self.cell_mut(id) {
             Some(cell) => {
                 cell.live = false;
+                cell.redirect = None;
                 cell.generation = cell.generation.wrapping_add(1);
                 cell.value = Value::Void;
                 cell.binding = None;
@@ -399,8 +409,25 @@ impl Ui {
         }
     }
 
-    /// Set `id` by hand.
+    /// Where setting or binding `id` goes: through its redirects.
+    fn redirected(&self, mut id: PropId) -> PropId {
+        for _ in 0..8 {
+            match self.cell(id).and_then(|cell| cell.redirect) {
+                Some(next) => id = next,
+                None => break,
+            }
+        }
+        id
+    }
+
+    /// Set `id` by hand, or what it redirects to.
     pub(crate) fn write(&mut self, id: PropId, value: Value) {
+        let id = self.redirected(id);
+        self.write_direct(id, value);
+    }
+
+    /// Set `id` itself by hand.
+    pub(crate) fn write_direct(&mut self, id: PropId, value: Value) {
         self.unlink(id);
         let Some(cell) = self.cell_mut(id) else {
             return;
@@ -414,8 +441,37 @@ impl Ui {
         self.mark_readers(id);
     }
 
-    /// Give `id` a binding.
+    /// Give `id`, or what it redirects to, a binding.
     pub(crate) fn attach(&mut self, id: PropId, binding: Binding) {
+        let id = self.redirected(id);
+        self.attach_direct(id, binding);
+    }
+
+    /// Put a cell, owned by `owner`, in front of `id`: it takes `id`'s
+    /// value and binding, and what is set or bound on `id` from now on
+    /// goes to it, while `id` is bound anew by the caller (a state's
+    /// choice, a `Behavior`'s animated value). Answers the new cell.
+    pub(crate) fn divert(&mut self, id: PropId, owner: ItemId) -> PropId {
+        let (value, binding, redirect) = match self.cell_mut(id) {
+            Some(cell) => (cell.value.clone(), cell.binding.take(), cell.redirect),
+            None => return id,
+        };
+        let held = self.alloc(value);
+        self.own_cell(owner, held);
+        if let Some(cell) = self.cell_mut(held) {
+            cell.redirect = redirect;
+        }
+        if let Some(binding) = binding {
+            self.attach_direct(held, binding);
+        }
+        if let Some(cell) = self.cell_mut(id) {
+            cell.redirect = Some(held);
+        }
+        held
+    }
+
+    /// Give `id` itself a binding.
+    pub(crate) fn attach_direct(&mut self, id: PropId, binding: Binding) {
         self.unlink(id);
         let Some(cell) = self.cell_mut(id) else {
             return;

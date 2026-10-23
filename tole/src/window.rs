@@ -60,6 +60,8 @@ pub struct Window {
     pending: bool,
     /// The compositor asked it to close, or closed it.
     closed: bool,
+    /// When it opened: the animations' clock counts from here.
+    opened: std::time::Instant,
 }
 
 impl Window {
@@ -88,6 +90,7 @@ impl Window {
             awaiting: false,
             pending: true,
             closed: false,
+            opened: std::time::Instant::now(),
         })
     }
 
@@ -121,7 +124,15 @@ impl Window {
         ui: &mut Ui,
         timeout: Option<Duration>,
     ) -> Result<Vec<Event>, Error> {
+        // While anything animates, wake at least once a frame.
+        let timeout = if ui.animating() {
+            let frame = Duration::from_millis(8);
+            Some(timeout.map_or(frame, |t| t.min(frame)))
+        } else {
+            timeout
+        };
         let events = self.client.dispatch(timeout)?;
+        ui.tick(self.opened.elapsed().as_secs_f64() * 1000.0);
         let mut rest = Vec::new();
         for event in events {
             match event {

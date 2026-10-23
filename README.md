@@ -477,6 +477,101 @@ impl tole::Model for JournalRows {
 
 ![journal](docs/screenshots/journal.png)
 
+### States, transitions and animations
+
+`states` with `when` and `PropertyChanges`, a `Transition` animating
+what a change of state moves, `Behavior on x` animating every change,
+and `SequentialAnimation`/`ParallelAnimation`/`PauseAnimation` with
+`NumberAnimation` and `ColorAnimation` on a property, `loops` and
+`running`, along Qt's easing curves. The clock is the window's frames;
+the tests and these pictures tick it by hand, so they are exact. The
+picture is a second after the switch was clicked; below it, the demo
+played (an animated PNG, drawn the same way: the switch on, then off).
+
+```qml
+// States, transitions and animations. The switch's knob and colour
+// follow it through Behaviors; the card has a state, "open", that the
+// switch turns on, and a Transition slides its panel in and tints the
+// card when the state changes. The dot pulses for ever: a
+// SequentialAnimation on its opacity.
+import Fx
+
+component Switch : Rectangle {
+    id: switcher
+    property bool on
+    width: 52; height: 30
+    radius: 15
+    color: on ? "#2a62c9" : "#c9c9c4"
+    Behavior on color { ColorAnimation { duration: 180 } }
+    Rectangle {
+        x: switcher.on ? 25 : 3; y: 3
+        width: 24; height: 24
+        radius: 12
+        color: "white"
+        Behavior on x { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+    }
+    MouseArea { anchors.fill: parent; onClicked: switcher.on = !switcher.on }
+}
+
+component Transitions : Rectangle {
+    width: 480; height: 300
+    color: "#fafaf8"
+
+    Text { x: 24; y: 28; text: "Details"; font: font("Inter", 18, 600); color: "#1a1a1a" }
+    Switch { id: toggle; x: 404; y: 24 }
+
+    Rectangle {
+        id: card
+        x: 24; y: 76; width: 432; height: 200
+        radius: 12
+        color: "white"
+        border { width: 1; color: "#e6e6e2" }
+        clip: true
+
+        Text { x: 20; y: 22; text: toggle.on ? "Shown in full" : "Folded"; font: font("Inter", 15, 600); color: "#1a1a1a" }
+        Rectangle {
+            x: 20; y: 60; width: 12; height: 12
+            radius: 6
+            color: "#2fa35a"
+            SequentialAnimation on opacity {
+                loops: Animation.Infinite
+                NumberAnimation { to: 0.2; duration: 700; easing.type: Easing.InOutSine }
+                NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutSine }
+            }
+        }
+        Text { x: 40; y: 57; text: "live"; font: font("Inter", 13, 400); color: "#777777" }
+
+        Rectangle {
+            id: panel
+            x: 440; y: 12; width: 200; height: 176
+            radius: 10
+            color: "#14306a"
+            Text { x: 18; y: 18; text: "The panel"; font: font("Inter", 15, 600); color: "white" }
+            Text { x: 18; y: 44; text: "slid in by a Transition"; font: font("Inter", 12, 400); color: "#b8c8ec" }
+        }
+    }
+
+    states: [
+        State {
+            name: "open"
+            when: toggle.on
+            PropertyChanges { target: panel; x: 220 }
+            PropertyChanges { target: card; color: "#eef3fc" }
+        }
+    ]
+    transitions: [
+        Transition {
+            NumberAnimation { properties: "x"; duration: 500; easing.type: Easing.OutBack }
+            ColorAnimation { duration: 500 }
+        }
+    ]
+}
+```
+
+![transitions](docs/screenshots/transitions.png)
+
+![transitions, played](docs/screenshots/transitions-animated.png)
+
 ### In a window
 
 Every demo also runs in a window on the Wayland desktop it is started
@@ -494,9 +589,8 @@ alone are drawn and handed to the compositor. A test holds the kept
 frame to what drawing the whole scene gives, pixel for pixel, as a
 rounded box wanders at scales 1, 1.5 and 2.
 
-More come as the framework reaches them: controls, a 100,000-row list,
-states and transitions, the theme in light and dark, a chart, and the lode
-viewer ported onto tole.
+More come as the framework reaches them: the controls and the theme in
+light and dark, a chart, and the lode viewer ported onto tole.
 
 ## Crates
 
@@ -505,7 +599,8 @@ viewer ported onto tole.
   `MouseArea`, `FocusScope`), `Grid`, `Flow`, `RowLayout`,
   `ColumnLayout`, `GridLayout` with `Layout.*`, `Repeater` and models,
   `Flickable`, `ListView` with virtualization, recycling and
-  `DelegateChooser`,
+  `DelegateChooser`, states, transitions, `Behavior` and animations on
+  a frame clock,
   signals and handlers, the pointer's routing, focus, keys and the Tab
   order, damage and
   partial redraw into a kept `Frame`, the window (`wayland` feature),

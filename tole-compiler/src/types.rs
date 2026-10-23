@@ -37,6 +37,8 @@ pub(crate) enum Ty {
     /// What a `Repeater` or view takes as its `model`: a count, a list or
     /// a model, made into one when bound.
     ModelSource,
+    /// An animation's `easing.type`.
+    Easing,
 }
 
 impl Ty {
@@ -84,6 +86,7 @@ impl Ty {
             Ty::List(inner) => format!("::std::vec::Vec<{}>", inner.rust()),
             Ty::Model(inner) => format!("::tole::ModelRc<{}>", inner.rust()),
             Ty::ModelSource => "::tole::ModelSource".to_owned(),
+            Ty::Easing => "::tole::Easing".to_owned(),
             Ty::Enum(name) | Ty::Struct(name) => name.clone(),
         }
     }
@@ -104,6 +107,7 @@ impl Ty {
             Ty::List(inner) => format!("list<{}>", inner.name()),
             Ty::Model(inner) => format!("model<{}>", inner.name()),
             Ty::ModelSource => "count, list or model".to_owned(),
+            Ty::Easing => "easing curve".to_owned(),
             Ty::Enum(name) | Ty::Struct(name) => name.clone(),
         }
     }
@@ -224,6 +228,7 @@ impl Kind {
             ["focus"] => Some((".common.focus", Ty::Bool)),
             ["activeFocus"] => Some((".common.active_focus", Ty::Bool)),
             ["activeFocusOnTab"] => Some((".common.active_focus_on_tab", Ty::Bool)),
+            ["state"] => Some((".common.state", Ty::Str)),
             _ => None,
         };
         if common.is_some() {
@@ -363,6 +368,18 @@ pub(crate) fn builtin_constant(space: &str, name: &str) -> Option<(&'static str,
         ("Text", "AlignTop") => ("::tole::VAlign::Top", Ty::VAlign),
         ("Text", "AlignVCenter") => ("::tole::VAlign::Center", Ty::VAlign),
         ("Text", "AlignBottom") => ("::tole::VAlign::Bottom", Ty::VAlign),
+        ("Animation", "Infinite") => ("-1_i32", Ty::Int),
+        ("Easing", "Linear") => ("::tole::Easing::Linear", Ty::Easing),
+        ("Easing", "InQuad") => ("::tole::Easing::InQuad", Ty::Easing),
+        ("Easing", "OutQuad") => ("::tole::Easing::OutQuad", Ty::Easing),
+        ("Easing", "InOutQuad") => ("::tole::Easing::InOutQuad", Ty::Easing),
+        ("Easing", "InCubic") => ("::tole::Easing::InCubic", Ty::Easing),
+        ("Easing", "OutCubic") => ("::tole::Easing::OutCubic", Ty::Easing),
+        ("Easing", "InOutCubic") => ("::tole::Easing::InOutCubic", Ty::Easing),
+        ("Easing", "InOutSine") => ("::tole::Easing::InOutSine", Ty::Easing),
+        ("Easing", "OutBack") => ("::tole::Easing::OutBack", Ty::Easing),
+        ("Easing", "OutBounce") => ("::tole::Easing::OutBounce", Ty::Easing),
+        ("Easing", "OutElastic") => ("::tole::Easing::OutElastic", Ty::Easing),
         ("Qt", "AlignLeft") => ("::tole::align::LEFT", Ty::Int),
         ("Qt", "AlignRight") => ("::tole::align::RIGHT", Ty::Int),
         ("Qt", "AlignHCenter") => ("::tole::align::H_CENTER", Ty::Int),

@@ -58,7 +58,7 @@ pub fn find_text(ui: &mut Ui, label: &str) -> Option<tole::ItemId> {
 }
 
 /// Every demo, in the README's order.
-pub const DEMOS: [Demo; 6] = [
+pub const DEMOS: [Demo; 7] = [
     Demo {
         name: "hello",
         about: "the smallest program",
@@ -110,7 +110,50 @@ pub const DEMOS: [Demo; 6] = [
             Some(journal.common())
         },
     },
+    Demo {
+        name: "transitions",
+        about: "states, a Transition, Behaviors and a looping animation, a second after the switch",
+        make: |ui| {
+            let root = Transitions::new(ui, None)?;
+            ui.tick(0.0);
+            click_at(ui, 430.0, 39.0);
+            ui.update();
+            ui.tick(1000.0);
+            Some(root.common())
+        },
+    },
 ];
+
+/// Press and release the pointer at (`x`, `y`).
+pub fn click_at(ui: &mut Ui, x: f32, y: f32) {
+    ui.pointer_move(x, y);
+    ui.pointer_press();
+    ui.pointer_release();
+    ui.pointer_leave();
+}
+
+/// The transitions demo as an animated PNG at scale 1: the switch turned
+/// on, then off, 25 frames a second.
+#[must_use]
+pub fn transitions_animated() -> Option<Vec<u8>> {
+    let mut ui = Ui::new(fonts());
+    let root = Transitions::new(&mut ui, None)?;
+    let (w, h) = (
+        ui.get(root.common().width).round() as u32,
+        ui.get(root.common().height).round() as u32,
+    );
+    let mut frames = Vec::new();
+    for frame in 0..60_u32 {
+        let t = f64::from(frame) * 40.0;
+        if frame == 5 || frame == 35 {
+            click_at(&mut ui, 430.0, 39.0);
+        }
+        ui.update();
+        ui.tick(t);
+        frames.push(ui.render((w, h), Color::hex(0xfa_fa_f8))?.data().to_vec());
+    }
+    Some(tole::png::encode_animated(w, h, &frames, 40))
+}
 
 /// The journal demo's rows: 100,000 of them, each made when asked for
 /// and never kept.
@@ -368,6 +411,38 @@ mod tests {
         }
         let (_, after) = ui.view_delegates(list).expect("a view");
         assert!(after < 40, "{after} made");
+        let _ = root;
+    }
+
+    #[test]
+    fn the_animation_is_what_the_demo_plays() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../docs/screenshots/transitions-animated.png");
+        let kept = std::fs::read(path).unwrap_or_default();
+        assert!(
+            super::transitions_animated().expect("played") == kept,
+            "docs/screenshots/transitions-animated.png is stale: run `cargo run -p tole-examples -- --all docs/screenshots`"
+        );
+    }
+
+    #[test]
+    fn the_switch_slides_and_the_state_follows() {
+        let mut ui = tole::Ui::new(super::fonts());
+        let root = super::Transitions::new(&mut ui, None).expect("made");
+        let panel = super::find_text(&mut ui, "The panel")
+            .and_then(|t| ui.parent(t))
+            .expect("panel");
+        let x = |ui: &mut tole::Ui| ui.get(ui.common(panel).expect("lives").x);
+        assert_eq!(x(&mut ui), 440.0);
+        ui.tick(0.0);
+        super::click_at(&mut ui, 430.0, 39.0);
+        ui.update();
+        ui.tick(250.0);
+        let mid = x(&mut ui);
+        assert!(mid < 300.0 && mid > 200.0, "on its way: {mid}");
+        ui.tick(600.0);
+        assert_eq!(x(&mut ui), 220.0);
+        assert!(ui.animating(), "the dot pulses for ever");
         let _ = root;
     }
 

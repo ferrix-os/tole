@@ -7,6 +7,7 @@
 //! anchors. Bindings are lazy, so a binding may read an item declared
 //! after it.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 
@@ -81,6 +82,9 @@ struct Scope<'a> {
     locals: &'a [(String, String, Ty)],
     /// How deep in delegates: names the factories' locals apart.
     depth: usize,
+    /// Code that runs once every element is made and given its members:
+    /// states first, then animations.
+    deferred: &'a RefCell<(String, String)>,
     /// The file, for diagnostics.
     file: &'a str,
 }
@@ -374,6 +378,7 @@ impl Program {
                 Self::handle(ty)
             );
         }
+        let deferred = RefCell::new((String::new(), String::new()));
         for (var, ty, element, parent) in &elements {
             let scope = Scope {
                 component: c,
@@ -384,11 +389,16 @@ impl Program {
                 params: &[],
                 locals: &[],
                 depth: 0,
+                deferred: &deferred,
                 file,
             };
             out.push_str(&self.members(&scope, var, ty, element)?);
         }
+        let (states, animations) = deferred.into_inner();
+        out.push_str(&states);
+        out.push_str(&animations);
         out.push_str("        ui.update();\n        ::core::option::Option::Some(this)\n    }\n");
+        let no_deferred = RefCell::new((String::new(), String::new()));
         for member in &c.root.members {
             if let Member::Function {
                 name: fname, body, ..
@@ -409,6 +419,7 @@ impl Program {
                     params: &typed,
                     locals: &[],
                     depth: 0,
+                    deferred: &no_deferred,
                     file,
                 };
                 let code = self.expr(&scope, body)?;
@@ -643,6 +654,7 @@ impl Program {
             params: &params,
             locals: scope.locals,
             depth: scope.depth,
+            deferred: scope.deferred,
             file,
         };
         if let Some(own) = body.iter().find_map(|statement| match statement {
@@ -710,6 +722,7 @@ impl Program {
             params: &params,
             locals: scope.locals,
             depth: scope.depth,
+            deferred: scope.deferred,
             file,
         };
         let statements = self.statements(&inner, body)?;
@@ -1059,6 +1072,42 @@ impl Program {
                     out.push_str(&self.handler(scope, var, ty, attached.as_ref(), signal, body)?);
                     continue;
                 }
+                Member::On { target, element } => {
+                    let code = self.on_animation(scope, var, ty, target, element)?;
+                    scope.deferred.borrow_mut().1.push_str(&code);
+                    continue;
+                }
+                Member::Elements { name, elements } if name.text == "states" => {
+                    let transitions: Vec<&Element> = element
+                        .members
+                        .iter()
+                        .filter_map(|m| match m {
+                            Member::Elements { name, elements } if name.text == "transitions" => {
+                                Some(elements.iter())
+                            }
+                            _ => None,
+                        })
+                        .flatten()
+                        .collect();
+                    let (states, animations) =
+                        self.states(scope, var, ty, elements, &transitions)?;
+                    let mut deferred = scope.deferred.borrow_mut();
+                    deferred.0.push_str(&states);
+                    deferred.1.push_str(&animations);
+                    continue;
+                }
+                Member::Elements { name, .. } => {
+                    if element.members.iter().any(
+                        |m| matches!(m, Member::Elements { name, .. } if name.text == "states"),
+                    ) {
+                        continue;
+                    }
+                    return Err(diag(
+                        file,
+                        name.pos,
+                        "`transitions` animate changes of `states`, and there are none here",
+                    ));
+                }
                 _ => continue,
             };
             let ((prop, want), expr, pos) = (target, expr, pos);
@@ -1398,6 +1447,7 @@ impl Program {
             format!("ui.get(index_{depth})"),
             Ty::Int,
         ));
+        let deferred = RefCell::new((String::new(), String::new()));
         for (evar, ety, el, parent) in &elements {
             let inner = Scope {
                 component: scope.component,
@@ -1408,15 +1458,507 @@ impl Program {
                 params: &[],
                 locals: &locals,
                 depth,
+                deferred: &deferred,
                 file,
             };
             out.push_str(&self.members(&inner, evar, ety, el)?);
         }
+        let (states, animations) = deferred.into_inner();
+        out.push_str(&states);
+        out.push_str(&animations);
         let _ = writeln!(
             out,
             "        ::core::option::Option::Some(::tole::Delegate {{ root: ::tole::Element::id(&{root}), row: row_{depth}, index: index_{depth} }})\n        }})"
         );
         Ok(out)
+    }
+
+    /// The bindings of an animation element: name to expression.
+    fn bindings_of(element: &Element) -> Vec<(String, &Expr, Pos)> {
+        element
+            .members
+            .iter()
+            .filter_map(|m| match m {
+                Member::Binding { path, expr } => Some((
+                    path.iter()
+                        .map(|p| p.text.as_str())
+                        .collect::<Vec<_>>()
+                        .join("."),
+                    expr,
+                    path.first().map_or(expr.pos(), |p| p.pos),
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// An animation's `duration` and `easing.type` as a `tole::Tween`.
+    fn tween(&self, scope: &Scope<'_>, element: &Element) -> Result<String, Diagnostic> {
+        let file = scope.file;
+        let mut duration = "250.0_f32".to_owned();
+        let mut easing = "::tole::Easing::Linear".to_owned();
+        for (name, expr, _) in Self::bindings_of(element) {
+            match name.as_str() {
+                "duration" => {
+                    let code = self.expr(scope, expr)?;
+                    duration = coerce(file, expr.pos(), code, &Ty::Real)?;
+                }
+                "easing.type" => {
+                    let code = self.expr(scope, expr)?;
+                    easing = coerce(file, expr.pos(), code, &Ty::Easing)?;
+                }
+                _ => {}
+            }
+        }
+        Ok(format!(
+            "::tole::Tween {{ duration: {duration}, easing: {easing} }}"
+        ))
+    }
+
+    /// The property an animation's `target` and `property` name, or
+    /// `default` (the property it is `on`).
+    fn animated(
+        &self,
+        scope: &Scope<'_>,
+        element: &Element,
+        default: Option<&(String, Ty)>,
+    ) -> Result<(String, Ty), Diagnostic> {
+        let file = scope.file;
+        let bindings = Self::bindings_of(element);
+        let target = bindings.iter().find(|(n, _, _)| n == "target");
+        let property = bindings.iter().find(|(n, _, _)| n == "property");
+        match (target, property) {
+            (Some((_, target, _)), Some((_, property, at))) => {
+                let (var, ty) = match target {
+                    Expr::Path(names) => match names.as_slice() {
+                        [one] => scope.ids.get(&one.text).cloned(),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+                .ok_or_else(|| diag(file, target.pos(), "an animation's `target` names an id"))?;
+                let name = match property {
+                    Expr::Str(parts, _) => match parts.as_slice() {
+                        [StrPart::Text(text)] => text.clone(),
+                        _ => String::new(),
+                    },
+                    _ => String::new(),
+                };
+                let path: Vec<&str> = name.split('.').collect();
+                let (rust, pty) = self.property(&ty, &path).ok_or_else(|| {
+                    diag(
+                        file,
+                        *at,
+                        &format!("{} has no property `{name}`", describe(&ty)),
+                    )
+                })?;
+                Ok((format!("{var}{rust}"), pty))
+            }
+            _ => default.cloned().ok_or_else(|| {
+                diag(
+                    file,
+                    element.kind.pos,
+                    "this animation needs a `target` and a `property`",
+                )
+            }),
+        }
+    }
+
+    /// An animation element as a `tole::Step`, its tweens on `default`
+    /// unless they name their own target.
+    fn step(
+        &self,
+        scope: &Scope<'_>,
+        element: &Element,
+        default: Option<&(String, Ty)>,
+    ) -> Result<String, Diagnostic> {
+        let file = scope.file;
+        match element.kind.text.as_str() {
+            "NumberAnimation" | "ColorAnimation" => {
+                let (prop, ty) = self.animated(scope, element, default)?;
+                let want = if element.kind.text == "ColorAnimation" {
+                    Ty::Color
+                } else {
+                    Ty::Real
+                };
+                if ty != want {
+                    return Err(diag(
+                        file,
+                        element.kind.pos,
+                        &format!(
+                            "a {} animates a {}, and this is a {}",
+                            element.kind.text,
+                            want.name(),
+                            ty.name()
+                        ),
+                    ));
+                }
+                let mut ends = [
+                    "::core::option::Option::None".to_owned(),
+                    "::core::option::Option::None".to_owned(),
+                ];
+                for (name, expr, _) in Self::bindings_of(element) {
+                    let slot = match name.as_str() {
+                        "from" => 0,
+                        "to" => 1,
+                        _ => continue,
+                    };
+                    let code = self.expr_want(scope, expr, Some(&ty))?;
+                    let text = coerce(file, expr.pos(), code, &ty)?;
+                    if let Some(end) = ends.get_mut(slot) {
+                        *end = format!(
+                            "::core::option::Option::Some(<{} as ::tole::PropType>::into_value({text}))",
+                            ty.rust()
+                        );
+                    }
+                }
+                let [from, to] = ends;
+                Ok(format!(
+                    "::tole::Step::Tween {{ target: {prop}.id, from: {from}, to: {to}, tween: {} }}",
+                    self.tween(scope, element)?
+                ))
+            }
+            "PauseAnimation" => {
+                let tween = self.tween(scope, element)?;
+                Ok(format!("::tole::Step::Pause(({tween}).duration)"))
+            }
+            "SequentialAnimation" | "ParallelAnimation" => {
+                let mut steps = Vec::new();
+                for member in &element.members {
+                    if let Member::Child(child) = member {
+                        steps.push(self.step(scope, child, default)?);
+                    }
+                }
+                let kind = if element.kind.text == "SequentialAnimation" {
+                    "Sequential"
+                } else {
+                    "Parallel"
+                };
+                Ok(format!(
+                    "::tole::Step::{kind}(::std::vec![{}])",
+                    steps.join(", ")
+                ))
+            }
+            other => Err(diag(
+                file,
+                element.kind.pos,
+                &format!(
+                    "`{other}` is not an animation: NumberAnimation, ColorAnimation, PauseAnimation, SequentialAnimation, ParallelAnimation"
+                ),
+            )),
+        }
+    }
+
+    /// `Behavior on x { ... }`, or an animation `on x`.
+    fn on_animation(
+        &self,
+        scope: &Scope<'_>,
+        var: &str,
+        ty: &ElemTy,
+        target: &[Ident],
+        element: &Element,
+    ) -> Result<String, Diagnostic> {
+        let file = scope.file;
+        let names: Vec<&str> = target.iter().map(|p| p.text.as_str()).collect();
+        let at = target.first().map_or(element.kind.pos, |p| p.pos);
+        let (rust, pty) = self.property(ty, &names).ok_or_else(|| {
+            diag(
+                file,
+                at,
+                &format!("{} has no property `{}`", describe(ty), names.join(".")),
+            )
+        })?;
+        if !matches!(pty, Ty::Real | Ty::Color) {
+            return Err(diag(
+                file,
+                at,
+                &format!("a {} does not animate: reals and colours do", pty.name()),
+            ));
+        }
+        let prop = (format!("{var}{rust}"), pty);
+        let id = format!("::tole::Element::id(&{var})");
+        if element.kind.text == "Behavior" {
+            let inner: Vec<&Element> = element
+                .members
+                .iter()
+                .filter_map(|m| match m {
+                    Member::Child(child) => Some(child),
+                    _ => None,
+                })
+                .collect();
+            let [animation] = inner.as_slice() else {
+                return Err(diag(
+                    file,
+                    element.kind.pos,
+                    "a `Behavior` holds one animation",
+                ));
+            };
+            let _ = self.step(scope, animation, Some(&prop))?;
+            let tween = self.tween(scope, animation)?;
+            return Ok(format!(
+                "        ui.behavior({id}, {}.id, ::tole::Animate::Always({tween}));\n",
+                prop.0
+            ));
+        }
+        let step = self.step(scope, element, Some(&prop))?;
+        let mut loops = "1_i32".to_owned();
+        let mut running = "true".to_owned();
+        let mut running_reads = false;
+        for (name, expr, _) in Self::bindings_of(element) {
+            match name.as_str() {
+                "loops" => {
+                    let code = self.expr(scope, expr)?;
+                    loops = coerce(file, expr.pos(), code, &Ty::Int)?;
+                }
+                "running" => {
+                    let code = self.expr(scope, expr)?;
+                    running_reads = code.reads;
+                    running = coerce(file, expr.pos(), code, &Ty::Bool)?;
+                }
+                _ => {}
+            }
+        }
+        let set_running = if running_reads {
+            format!(
+                "::tole::Prop::bind(running, ui, move |ui: &mut ::tole::Ui| -> bool {{ {running} }});"
+            )
+        } else {
+            format!("::tole::Prop::set(running, ui, {running});")
+        };
+        Ok(format!(
+            "        {{ let running = ui.own_prop({id}, true); {set_running} let step = {step}; ui.animation_on({id}, step, {loops}, running); }}\n"
+        ))
+    }
+
+    /// `states` (and the `transitions` beside them) on the element in
+    /// `var`: the code choosing the active state and each changed
+    /// property's value, and the code animating changes of state.
+    fn states(
+        &self,
+        scope: &Scope<'_>,
+        var: &str,
+        ty: &ElemTy,
+        states: &[Element],
+        transitions: &[&Element],
+    ) -> Result<(String, String), Diagnostic> {
+        let file = scope.file;
+        let id = format!("::tole::Element::id(&{var})");
+        let rc = "::std::rc::Rc";
+        let mut whens = Vec::new();
+        // (target var, property as written) -> (rust prop, type, [(state, value code)])
+        let mut changes: Vec<(ChangeKey, Changed)> = Vec::new();
+        for state in states {
+            if state.kind.text != "State" {
+                return Err(diag(file, state.kind.pos, "`states` holds `State`s"));
+            }
+            let mut name = None;
+            for member in &state.members {
+                match member {
+                    Member::Binding { path, expr } if matches!(path.as_slice(), [p] if p.text == "name") =>
+                    {
+                        name = match expr {
+                            Expr::Str(parts, _) => match parts.as_slice() {
+                                [StrPart::Text(text)] => Some(text.clone()),
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                        if name.is_none() {
+                            return Err(diag(file, expr.pos(), "a state's `name` is a string"));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let Some(name) = name else {
+                return Err(diag(file, state.kind.pos, "a `State` has a `name`"));
+            };
+            for member in &state.members {
+                match member {
+                    Member::Binding { path, expr } if matches!(path.as_slice(), [p] if p.text == "when") =>
+                    {
+                        let code = self.expr(scope, expr)?;
+                        let cond = coerce(file, expr.pos(), code, &Ty::Bool)?;
+                        whens.push(format!(
+                            "({rc}::<str>::from({name:?}), {rc}::new(move |ui: &mut ::tole::Ui| -> bool {{ {cond} }}) as {rc}<dyn Fn(&mut ::tole::Ui) -> bool>)"
+                        ));
+                    }
+                    Member::Binding { .. } => {}
+                    Member::Child(changes_el) if changes_el.kind.text == "PropertyChanges" => {
+                        let bindings = Self::bindings_of(changes_el);
+                        let (tvar, tty) = match bindings.iter().find(|(n, _, _)| n == "target") {
+                            Some((_, Expr::Path(names), _)) => match names.as_slice() {
+                                [one] => scope.ids.get(&one.text).cloned(),
+                                _ => None,
+                            }
+                            .ok_or_else(|| {
+                                diag(file, changes_el.kind.pos, "`target` names an id")
+                            })?,
+                            Some((_, other, _)) => {
+                                return Err(diag(file, other.pos(), "`target` names an id"));
+                            }
+                            None => (var.to_owned(), ty.clone()),
+                        };
+                        for (prop, expr, at) in bindings {
+                            if prop == "target" {
+                                continue;
+                            }
+                            let path: Vec<&str> = prop.split('.').collect();
+                            let (rust, pty) = self.property(&tty, &path).ok_or_else(|| {
+                                diag(
+                                    file,
+                                    at,
+                                    &format!("{} has no property `{prop}`", describe(&tty)),
+                                )
+                            })?;
+                            let code = self.expr_want(scope, expr, Some(&pty))?;
+                            let text = coerce(file, expr.pos(), code, &pty)?;
+                            let value = format!(
+                                "({rc}::<str>::from({name:?}), {rc}::new(move |ui: &mut ::tole::Ui| -> ::tole::Value {{ let _ = &ui; <{} as ::tole::PropType>::into_value({text}) }}) as {rc}<dyn Fn(&mut ::tole::Ui) -> ::tole::Value>)",
+                                pty.rust()
+                            );
+                            let key = (tvar.clone(), prop.clone());
+                            match changes.iter_mut().find(|(k, _)| *k == key) {
+                                Some((_, (_, _, values))) => values.push((name.clone(), value)),
+                                None => changes.push((
+                                    key,
+                                    (format!("{tvar}{rust}"), pty, vec![(name.clone(), value)]),
+                                )),
+                            }
+                        }
+                    }
+                    Member::Child(other) => {
+                        return Err(diag(
+                            file,
+                            other.kind.pos,
+                            "a `State` holds `PropertyChanges`",
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let active = format!("active_{var}");
+        let mut out = format!(
+            "        let {active} = ui.active_state({id}, ::std::vec![{}])?;\n",
+            whens.join(", ")
+        );
+        for (_, (prop, _, values)) in &changes {
+            let values: Vec<&str> = values.iter().map(|(_, v)| v.as_str()).collect();
+            let _ = writeln!(
+                out,
+                "        ui.bind_states({id}, {prop}.id, {active}, ::std::vec![{}]);",
+                values.join(", ")
+            );
+        }
+        // Transitions: per changed property, the rules naming it.
+        let mut animations = String::new();
+        let mut rules: Vec<(usize, String)> = Vec::new();
+        for transition in transitions {
+            if transition.kind.text != "Transition" {
+                return Err(diag(
+                    file,
+                    transition.kind.pos,
+                    "`transitions` holds `Transition`s",
+                ));
+            }
+            let mut ends = ["*".to_owned(), "*".to_owned()];
+            let mut anims: Vec<&Element> = Vec::new();
+            for member in &transition.members {
+                match member {
+                    Member::Binding { path, expr } => {
+                        let slot = match path.as_slice() {
+                            [p] if p.text == "from" => 0,
+                            [p] if p.text == "to" => 1,
+                            _ => {
+                                return Err(diag(
+                                    file,
+                                    expr.pos(),
+                                    "a `Transition` has `from`, `to` and animations",
+                                ));
+                            }
+                        };
+                        let text = match expr {
+                            Expr::Str(parts, _) => match parts.as_slice() {
+                                [StrPart::Text(text)] => text.clone(),
+                                _ => String::new(),
+                            },
+                            _ => return Err(diag(file, expr.pos(), "a state's name is a string")),
+                        };
+                        if let Some(end) = ends.get_mut(slot) {
+                            *end = text;
+                        }
+                    }
+                    Member::Child(child) if child.kind.text == "ParallelAnimation" => {
+                        anims.extend(child.members.iter().filter_map(|m| match m {
+                            Member::Child(c) => Some(c),
+                            _ => None,
+                        }));
+                    }
+                    Member::Child(child) => anims.push(child),
+                    _ => {}
+                }
+            }
+            let [from, to] = ends;
+            for anim in anims {
+                if !matches!(
+                    anim.kind.text.as_str(),
+                    "NumberAnimation" | "ColorAnimation"
+                ) {
+                    return Err(diag(
+                        file,
+                        anim.kind.pos,
+                        "a `Transition` runs `NumberAnimation`s and `ColorAnimation`s, together",
+                    ));
+                }
+                let bindings = Self::bindings_of(anim);
+                let target = match bindings.iter().find(|(n, _, _)| n == "target") {
+                    Some((_, Expr::Path(names), _)) => match names.as_slice() {
+                        [one] => scope.ids.get(&one.text).map(|(v, _)| v.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let mut names: Vec<String> = Vec::new();
+                for (n, expr, _) in &bindings {
+                    if (n == "property" || n == "properties")
+                        && let Expr::Str(parts, _) = expr
+                        && let [StrPart::Text(text)] = parts.as_slice()
+                    {
+                        names.extend(text.split(',').map(|p| p.trim().to_owned()));
+                    }
+                }
+                let tween = self.tween(scope, anim)?;
+                for (index, ((tvar, prop), _)) in changes.iter().enumerate() {
+                    let named = names.is_empty() || names.contains(prop);
+                    let aimed = target.as_ref().is_none_or(|t| t == tvar);
+                    if named && aimed {
+                        rules.push((
+                            index,
+                            format!(
+                                "::tole::Transition {{ from: {rc}::from({from:?}), to: {rc}::from({to:?}), tween: {tween} }}"
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+        for (index, (_, (prop, pty, _))) in changes.iter().enumerate() {
+            let mine: Vec<&str> = rules
+                .iter()
+                .filter(|(i, _)| *i == index)
+                .map(|(_, r)| r.as_str())
+                .collect();
+            if mine.is_empty() || !matches!(pty, Ty::Real | Ty::Color) {
+                continue;
+            }
+            let _ = writeln!(
+                animations,
+                "        ui.behavior({id}, {prop}.id, ::tole::Animate::Transitions {{ active: {active}, rules: ::std::vec![{}] }});",
+                mine.join(", ")
+            );
+        }
+        Ok((out, animations))
     }
 
     /// `anchors.*` as one `Ui::anchor` call.
@@ -2121,6 +2663,14 @@ impl Program {
         Ok(code)
     }
 }
+
+/// A property a state changes: the target's local and the property as
+/// the markup writes it.
+type ChangeKey = (String, String);
+
+/// What the states make of it: its Rust path, its type, and each state's
+/// value as code.
+type Changed = (String, Ty, Vec<(String, String)>);
 
 /// The name of the component `component` is.
 fn component_name(program: &Program, component: &Component) -> String {

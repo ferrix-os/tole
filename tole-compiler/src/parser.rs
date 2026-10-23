@@ -84,6 +84,13 @@ pub(crate) enum Member {
         name: Ident,
         params: Vec<(Ident, Ident)>,
     },
+    /// `Behavior on x { ... }`, `NumberAnimation on opacity { ... }`.
+    On {
+        target: Vec<Ident>,
+        element: Element,
+    },
+    /// `states: [ State { ... }, ... ]`, `transitions: Transition { ... }`.
+    Elements { name: Ident, elements: Vec<Element> },
     /// `onName: statements`, or `Keys.onName: statements` for an attached
     /// object's signal.
     Handler {
@@ -446,6 +453,15 @@ impl Parser<'_> {
             }]);
         }
         let starts_upper = first.text.chars().next().is_some_and(char::is_uppercase);
+        if starts_upper && self.at_word("on") {
+            let _ = self.bump();
+            let mut target = vec![self.ident()?];
+            while self.eat(".") {
+                target.push(self.ident()?);
+            }
+            let element = self.element_body(first)?;
+            return Ok(vec![Member::On { target, element }]);
+        }
         if starts_upper && matches!(self.peek(), Tok::Punct("{") | Tok::Newline) {
             return Ok(vec![Member::Child(self.element_body(first)?)]);
         }
@@ -485,6 +501,29 @@ impl Parser<'_> {
             }
         }
         self.expect(":")?;
+        // `states: [ State { ... } ]`: elements as a property's value.
+        if let [name] = path.as_slice()
+            && (name.text == "states" || name.text == "transitions")
+        {
+            let name = name.clone();
+            let mut elements = Vec::new();
+            if self.eat("[") {
+                loop {
+                    while matches!(self.peek(), Tok::Newline | Tok::Punct(",")) {
+                        let _ = self.bump();
+                    }
+                    if self.eat("]") {
+                        break;
+                    }
+                    let kind = self.ident()?;
+                    elements.push(self.element_body(kind)?);
+                }
+            } else {
+                let kind = self.ident()?;
+                elements.push(self.element_body(kind)?);
+            }
+            return Ok(vec![Member::Elements { name, elements }]);
+        }
         // `delegate: Row { ... }`: an element as a property's value.
         if let [name] = path.as_slice()
             && name.text == "delegate"

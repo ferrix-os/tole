@@ -18,7 +18,9 @@
 //! `event`, `KeyNavigation` and `forceActiveFocus()` (U3c); `list<T>` and
 //! `model<T>`, list literals and indexing, `Layout.*`, and `Repeater`
 //! delegates with `modelData` and `index` (U4a); `Flickable`,
-//! `ListView`, `delegate:`, `DelegateChooser` and `group()` (U4b).
+//! `ListView`, `delegate:`, `DelegateChooser` and `group()` (U4b);
+//! `states`, `transitions`, `Behavior on`, animations `on` a property,
+//! `Easing.*` and `Animation.Infinite` (U5).
 
 mod emit;
 mod lexer;

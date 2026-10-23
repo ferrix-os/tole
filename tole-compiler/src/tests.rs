@@ -438,3 +438,66 @@ fn bad_choosers_are_refused() {
         "1:43: a `DelegateChooser` chooses a `ListView`'s delegates; a `Repeater` has one"
     );
 }
+
+#[test]
+fn states_transitions_and_animations() {
+    let rust = accepted(
+        "component A : Rectangle {
+            id: root
+            property bool open
+            Rectangle {
+                id: panel
+                Behavior on opacity { NumberAnimation { duration: 90; easing.type: Easing.OutCubic } }
+                SequentialAnimation on x { loops: Animation.Infinite; running: root.open
+                    NumberAnimation { to: 10; duration: 100 } PauseAnimation { duration: 50 } }
+            }
+            states: [ State { name: \"open\"; when: open; PropertyChanges { target: panel; width: 200; color: \"red\" } } ]
+            transitions: Transition { from: \"*\"; to: \"open\"; NumberAnimation { properties: \"width\"; duration: 300 } }
+        }",
+    );
+    for want in [
+        "ui.behavior(::tole::Element::id(&e1), e1.common.opacity.id, ::tole::Animate::Always(::tole::Tween { duration: ((90_i32) as f32), easing: ::tole::Easing::OutCubic }));",
+        "::tole::Prop::bind(running, ui, move |ui: &mut ::tole::Ui| -> bool { ui.get(this.open) });",
+        "::tole::Step::Sequential(::std::vec![::tole::Step::Tween { target: e1.common.x.id, from: ::core::option::Option::None, to: ::core::option::Option::Some(<f32 as ::tole::PropType>::into_value(((10_i32) as f32))),",
+        "::tole::Step::Pause((::tole::Tween { duration: ((50_i32) as f32), easing: ::tole::Easing::Linear }).duration)",
+        "ui.animation_on(::tole::Element::id(&e1), step, -1_i32, running);",
+        "let active_this = ui.active_state(::tole::Element::id(&this), ::std::vec![(::std::rc::Rc::<str>::from(\"open\"),",
+        "ui.bind_states(::tole::Element::id(&this), e1.common.width.id, active_this,",
+        "ui.bind_states(::tole::Element::id(&this), e1.props.color.id, active_this,",
+        "::tole::Animate::Transitions { active: active_this, rules: ::std::vec![::tole::Transition { from: ::std::rc::Rc::from(\"*\"), to: ::std::rc::Rc::from(\"open\"),",
+    ] {
+        assert!(rust.contains(want), "{want}\n{rust}");
+    }
+    // States are bound before the animations that read them.
+    let states = rust.find("let active_this").expect("states");
+    let behavior = rust
+        .find("::tole::Animate::Transitions")
+        .expect("transitions");
+    assert!(states < behavior);
+}
+
+#[test]
+fn bad_animations_are_refused() {
+    assert_eq!(
+        refused("component A : Text { Behavior on text { NumberAnimation {} } }"),
+        "1:34: a string does not animate: reals and colours do"
+    );
+    assert_eq!(
+        refused("component A : Rectangle { Behavior on color { NumberAnimation {} } }"),
+        "1:47: a NumberAnimation animates a real, and this is a color"
+    );
+    assert_eq!(
+        refused("component A : Item { states: [ State { when: true } ] }"),
+        "1:32: a `State` has a `name`"
+    );
+    assert_eq!(
+        refused("component A : Item { transitions: Transition { } }"),
+        "1:22: `transitions` animate changes of `states`, and there are none here"
+    );
+    assert_eq!(
+        refused(
+            "component A : Item { states: State { name: \"a\"; PropertyChanges { wings: 2 } } }"
+        ),
+        "1:67: A has no property `wings`"
+    );
+}

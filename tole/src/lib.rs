@@ -14,6 +14,7 @@
 //! crate's API: [`Ui::create`], [`Prop::set`], [`Prop::bind`],
 //! [`Ui::anchor`].
 
+mod anim;
 mod cpu;
 mod damage;
 mod flick;
@@ -35,6 +36,7 @@ mod view;
 #[cfg(feature = "wayland")]
 pub mod window;
 
+pub use anim::{Animate, Easing, StateValue, Step, Transition, Tween, When};
 pub use cpu::CpuRenderer;
 pub use focus::{KeyEvent, Nav};
 pub use handles::Element;

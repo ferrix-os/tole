@@ -63,6 +63,18 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
         let _ = writeln!(out, "{}: {}", demo.name, path.display());
+        if demo.name == "transitions" {
+            let animated = path.with_file_name("transitions-animated.png");
+            match tole_examples::transitions_animated() {
+                Some(png) if std::fs::write(&animated, &png).is_ok() => {
+                    let _ = writeln!(out, "transitions, animated: {}", animated.display());
+                }
+                _ => {
+                    let _ = writeln!(out, "{}: not written", animated.display());
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
     }
     ExitCode::SUCCESS
 }

@@ -1320,3 +1320,145 @@ fn a_flickable_scrolls_its_content_by_the_wheel() {
     ui.pointer_release();
     assert!(emitted(&mut ui).contains(&area.props.clicked));
 }
+
+#[test]
+fn a_behavior_animates_every_change_from_where_it_is() {
+    let mut ui = bare();
+    let r = crate::handles::Rectangle::new(&mut ui, None).unwrap();
+    let wide = ui.prop(false);
+    r.common
+        .width
+        .bind(&mut ui, move |ui| if ui.get(wide) { 200.0 } else { 100.0 });
+    ui.behavior(
+        r.id,
+        r.common.width.id,
+        crate::Animate::Always(crate::Tween {
+            duration: 100.0,
+            easing: crate::Easing::Linear,
+        }),
+    );
+    ui.tick(1000.0);
+    assert_eq!(ui.get(r.common.width), 100.0, "no animation to begin with");
+    // The binding it was given still follows what it read.
+    wide.set(&mut ui, true);
+    ui.update();
+    assert!(ui.animating());
+    ui.tick(1050.0);
+    assert_eq!(ui.get(r.common.width), 150.0);
+    // Set by hand half way: from where it is, to there.
+    r.common.width.set(&mut ui, 50.0);
+    ui.update();
+    ui.tick(1100.0);
+    assert_eq!(ui.get(r.common.width), 100.0);
+    ui.tick(1150.0);
+    assert_eq!(ui.get(r.common.width), 50.0);
+    assert!(!ui.animating());
+}
+
+#[test]
+fn states_choose_values_and_transitions_animate_the_change() {
+    let mut ui = bare();
+    let r = crate::handles::Rectangle::new(&mut ui, None).unwrap();
+    r.common.x.set(&mut ui, 10.0);
+    r.props.color.set(&mut ui, Color::hex(0x000000));
+    let hot = ui.prop(false);
+    let active = ui
+        .active_state(
+            r.id,
+            vec![(
+                Rc::from("hot"),
+                Rc::new(move |ui: &mut Ui| ui.get(hot)) as _,
+            )],
+        )
+        .unwrap();
+    ui.bind_states(
+        r.id,
+        r.common.x.id,
+        active,
+        vec![
+            (
+                Rc::from("moved"),
+                Rc::new(|_: &mut Ui| crate::Value::Real(90.0)) as _,
+            ),
+            (
+                Rc::from("hot"),
+                Rc::new(|_: &mut Ui| crate::Value::Real(50.0)) as _,
+            ),
+        ],
+    );
+    ui.bind_states(
+        r.id,
+        r.props.color.id,
+        active,
+        vec![(
+            Rc::from("hot"),
+            Rc::new(|_: &mut Ui| crate::Value::Color(Color::hex(0xff0000))) as _,
+        )],
+    );
+    ui.behavior(
+        r.id,
+        r.common.x.id,
+        crate::Animate::Transitions {
+            active,
+            rules: vec![crate::Transition {
+                from: Rc::from("*"),
+                to: Rc::from("moved"),
+                tween: crate::Tween {
+                    duration: 200.0,
+                    easing: crate::Easing::InOutQuad,
+                },
+            }],
+        },
+    );
+    assert_eq!(ui.get(r.common.x), 10.0);
+    r.common.state.set(&mut ui, Rc::from("moved"));
+    ui.update();
+    ui.tick(100.0);
+    assert_eq!(ui.get(r.common.x), 50.0, "half way along the curve");
+    ui.tick(200.0);
+    assert_eq!(ui.get(r.common.x), 90.0);
+    // `when` wins over `state`; no transition to "hot": it jumps.
+    hot.set(&mut ui, true);
+    ui.update();
+    assert_eq!(ui.get(r.common.x), 50.0);
+    assert_eq!(ui.get(r.props.color), Color::hex(0xff0000));
+    // Back to its own state: its own value, set while it was elsewhere.
+    hot.set(&mut ui, false);
+    r.common.state.set(&mut ui, Rc::from(""));
+    r.common.x.set(&mut ui, 20.0);
+    ui.update();
+    assert_eq!(ui.get(r.common.x), 20.0);
+    assert_eq!(ui.get(r.props.color), Color::hex(0x000000));
+}
+
+#[test]
+fn a_sequence_loops_with_pauses() {
+    let mut ui = bare();
+    let r = crate::handles::Rectangle::new(&mut ui, None).unwrap();
+    let running = ui.prop(true);
+    let tween = |to: f32| crate::Step::Tween {
+        target: r.common.opacity.id,
+        from: None,
+        to: Some(crate::Value::Real(to)),
+        tween: crate::Tween {
+            duration: 100.0,
+            easing: crate::Easing::Linear,
+        },
+    };
+    let step = crate::Step::Sequential(vec![tween(0.0), crate::Step::Pause(50.0), tween(1.0)]);
+    ui.animation_on(r.id, step, -1, running);
+    let at = |ui: &mut Ui, t: f64| {
+        ui.tick(t);
+        ui.get(r.common.opacity)
+    };
+    assert_eq!(at(&mut ui, 50.0), 0.5);
+    assert_eq!(at(&mut ui, 120.0), 0.0, "paused");
+    assert_eq!(at(&mut ui, 200.0), 0.5);
+    assert_eq!(at(&mut ui, 300.0), 0.5, "round again");
+    running.set(&mut ui, false);
+    ui.update();
+    assert!(!ui.animating());
+    assert_eq!(at(&mut ui, 400.0), 0.5, "stopped where it was");
+    assert_eq!(crate::Easing::OutCubic.apply(1.0), 1.0);
+    assert!((crate::Easing::OutBack.apply(0.7) - 1.0).abs() < 0.2);
+}

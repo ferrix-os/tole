@@ -54,6 +54,8 @@ pub struct Common {
     pub active_focus: Prop<bool>,
     /// Whether Tab and Shift+Tab stop at it.
     pub active_focus_on_tab: Prop<bool>,
+    /// The name of the state it is in: `""` for its own.
+    pub state: Prop<Rc<str>>,
 }
 
 /// A `Rectangle`'s own properties.
@@ -345,6 +347,7 @@ impl Ui {
             focus: self.prop(false),
             active_focus: self.prop(false),
             active_focus_on_tab: self.prop(false),
+            state: self.prop(Rc::<str>::from("")),
         };
         let (implicit_width, implicit_height) = (common.implicit_width, common.implicit_height);
         common.width.bind(self, move |ui| ui.get(implicit_width));
@@ -682,6 +685,14 @@ impl Ui {
         self.item(item)?.content
     }
 
+    /// Make the cell `prop` go with `owner`.
+    pub(crate) fn own_cell(&mut self, owner: ItemId, prop: crate::ui::PropId) {
+        match self.item_mut(owner) {
+            Some(data) => data.owned.push(Owned::Prop(prop)),
+            None => self.free(prop),
+        }
+    }
+
     /// Make `item` go with `owner` when `owner` is destroyed.
     pub(crate) fn own_item(&mut self, owner: ItemId, item: ItemId) {
         if let Some(data) = self.item_mut(owner) {
@@ -822,6 +833,7 @@ fn props_of(data: &ItemData) -> Vec<crate::ui::PropId> {
         c.focus.id,
         c.active_focus.id,
         c.active_focus_on_tab.id,
+        c.state.id,
     ];
     match data.kind {
         Kind::Item | Kind::FocusScope => {}
