@@ -72,6 +72,30 @@ pub(crate) const MODULES: &[(&str, &str, &[Source])] = &[
                 "TextArea.tole",
                 include_str!("../modules/Fx/Controls/TextArea.tole"),
             ),
+            (
+                "ComboBox.tole",
+                include_str!("../modules/Fx/Controls/ComboBox.tole"),
+            ),
+            (
+                "Menu.tole",
+                include_str!("../modules/Fx/Controls/Menu.tole"),
+            ),
+            (
+                "MenuItem.tole",
+                include_str!("../modules/Fx/Controls/MenuItem.tole"),
+            ),
+            (
+                "MenuSeparator.tole",
+                include_str!("../modules/Fx/Controls/MenuSeparator.tole"),
+            ),
+            (
+                "ScrollBar.tole",
+                include_str!("../modules/Fx/Controls/ScrollBar.tole"),
+            ),
+            (
+                "FileDialog.tole",
+                include_str!("../modules/Fx/Controls/FileDialog.tole"),
+            ),
         ],
     ),
 ];

@@ -172,6 +172,16 @@ impl Ui {
         for root in self.roots.clone() {
             self.scene_of(root, (0.0, 0.0), &mut scene);
         }
+        // The popups over it all, outside every cut; one may hold another.
+        let mut at = 0;
+        while let Some(&(popup, origin)) = scene.popups.get(at) {
+            scene.overlay = Some(popup);
+            let clips = core::mem::take(&mut scene.clips);
+            self.scene_of(popup, origin, &mut scene);
+            scene.clips = clips;
+            at += 1;
+        }
+        scene.overlay = None;
         scene
     }
 
@@ -182,6 +192,10 @@ impl Ui {
         };
         let opacity = self.get(common.opacity);
         if !self.get(common.visible) || opacity <= 0.0 {
+            return;
+        }
+        if self.popup(item).is_some() && scene.overlay != Some(item) {
+            scene.popups.push((item, origin));
             return;
         }
         let place = Rect::new(
@@ -221,6 +235,17 @@ impl Ui {
             }
             Some(Kind::Text(props)) => self.text_op(props, place, ops),
             Some(Kind::TextInput(props)) => self.text_input_ops(item, props, place, ops),
+            Some(Kind::Popup(props)) => {
+                if self.get(props.modal) {
+                    let window = self.window_rect();
+                    ops.push(DrawOp::Fill {
+                        rect: window,
+                        radius: 0.0,
+                        color: self.get(props.dim_color),
+                    });
+                }
+            }
+            Some(Kind::SplitView(props)) => self.split_ops(item, props, place, ops),
             _ => {}
         }
         let scale = self.scale();

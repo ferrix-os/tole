@@ -143,11 +143,17 @@ impl Ui {
     }
 
     /// The children a container places: every child but a `Repeater`,
-    /// which makes its delegates beside itself instead.
+    /// which makes its delegates beside itself instead, a `Popup`, which
+    /// is placed where it says over everything, and a model.
     pub(crate) fn placed_children(&self, parent: ItemId) -> Vec<(ItemId, Common)> {
         self.children(parent)
             .iter()
-            .filter(|&&child| !matches!(self.kind(child), Some(Kind::Repeater(_))))
+            .filter(|&&child| {
+                !matches!(
+                    self.kind(child),
+                    Some(Kind::Repeater(_) | Kind::Popup(_) | Kind::FolderListModel(_))
+                )
+            })
             .filter_map(|&child| Some((child, self.common(child)?)))
             .collect()
     }
@@ -162,8 +168,13 @@ impl Ui {
             Some(Kind::Grid(p)) => (p.solve, p.cross, Shape::Grid(p, false)),
             Some(Kind::GridLayout(p)) => (p.solve, p.cross, Shape::Grid(p, true)),
             Some(Kind::Flow(p)) => (p.solve, p.cross, Shape::Flow(p.spacing)),
-            Some(Kind::RowLayout(p)) => (p.solve, p.cross, Shape::Line(p.spacing, true)),
-            Some(Kind::ColumnLayout(p)) => (p.solve, p.cross, Shape::Line(p.spacing, false)),
+            Some(Kind::RowLayout(p)) => (p.solve, p.cross, Shape::Line(p.spacing, true, false)),
+            Some(Kind::ColumnLayout(p)) => (p.solve, p.cross, Shape::Line(p.spacing, false, false)),
+            Some(Kind::SplitView(p)) => (
+                p.flow.solve,
+                p.flow.cross,
+                Shape::Line(p.flow.spacing, !p.vertical, true),
+            ),
             _ => return false,
         };
         let kids: Rc<Vec<(Common, Option<LayoutProps>)>> = Rc::new(
@@ -260,8 +271,9 @@ enum Shape {
     Grid(crate::item::GridProps, bool),
     /// A `Flow`, with its spacing.
     Flow(Prop<f32>),
-    /// A `RowLayout` (`true`) or `ColumnLayout`, with its spacing.
-    Line(Prop<f32>, bool),
+    /// A `RowLayout` (`true`) or `ColumnLayout`, with its spacing, and
+    /// whether every child fills it across (a `SplitView`'s do).
+    Line(Prop<f32>, bool, bool),
 }
 
 /// One child as a layout sees it, along one axis.
@@ -465,13 +477,26 @@ impl Shape {
             (align::TOP, align::BOTTOM, align::V_CENTER)
         };
         match self {
-            Shape::Line(spacing, across) if across == horizontal => {
+            Shape::Line(spacing, across, _) if across == horizontal => {
                 along(&children, ui.get(spacing), room)
             }
-            Shape::Line(_, across) => {
+            Shape::Line(_, across, fills) => {
                 // Across a line: a row's children centred down, a
                 // column's at its left, unless they say.
                 let default = if across { align::V_CENTER } else { align::LEFT };
+                let children: Vec<(bool, Span, i32)> = children
+                    .into_iter()
+                    .map(|(shown, span, align)| {
+                        (
+                            shown,
+                            Span {
+                                fill: span.fill || fills,
+                                ..span
+                            },
+                            align,
+                        )
+                    })
+                    .collect();
                 beside(&children, flags, default, room)
             }
             Shape::Grid(props, layout) => {

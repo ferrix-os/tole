@@ -1,0 +1,65 @@
+// How much of something is in view and where, and a handle to move it.
+// `size` is the part in view (0 to 1) and `position` where its start is
+// (0 to 1 - size), both bound to what it scrolls; a drag, or a press
+// beside the handle, says `moved` with the position wanted, and the user
+// moves what it scrolls:
+//
+//   ScrollBar {
+//       size: list.height / list.contentHeight
+//       position: list.contentY / list.contentHeight
+//       onMoved: list.contentY = position * list.contentHeight
+//   }
+import Fx
+
+component ScrollBar : Item {
+    id: bar
+    property real size: 1
+    property real position: 0
+    property int orientation: Qt.Vertical
+    property bool vertical: orientation == Qt.Vertical
+    property bool active: area.containsMouse || area.pressed
+    // Where along the handle it was taken.
+    property real grip: 0
+    signal moved(real position)
+
+    implicitWidth: vertical ? 10 : 100
+    implicitHeight: vertical ? 100 : 10
+    visible: size < 1
+
+    // The track's length, the handle's, and where a pointer at `at`
+    // puts the start.
+    function track(): real {
+        return vertical ? height : width
+    }
+    function thumb(): real {
+        return max(size * track(), 24)
+    }
+    function wanted(at: real): real {
+        return track() > thumb() ? clamp((at - grip) / (track() - thumb()) * (1 - size), 0, 1 - size) : 0
+    }
+
+    Rectangle {
+        id: handle
+        x: bar.vertical ? 2 : (bar.size < 1 ? bar.position / (1 - bar.size) * (bar.width - width) : 0)
+        y: bar.vertical ? (bar.size < 1 ? bar.position / (1 - bar.size) * (bar.height - height) : 0) : 2
+        width: bar.vertical ? bar.width - 4 : bar.thumb()
+        height: bar.vertical ? bar.thumb() : bar.height - 4
+        radius: 3
+        color: bar.active ? Theme.ink4 : Theme.bar
+    }
+    MouseArea {
+        id: area
+        anchors.fill: parent
+        hoverEnabled: true
+        onPressed: {
+            if (bar.vertical) {
+                if (mouseY >= handle.y && mouseY < handle.y + handle.height) { bar.grip = mouseY - handle.y } else { bar.grip = handle.height / 2 }
+                bar.moved(bar.wanted(mouseY))
+            } else {
+                if (mouseX >= handle.x && mouseX < handle.x + handle.width) { bar.grip = mouseX - handle.x } else { bar.grip = handle.width / 2 }
+                bar.moved(bar.wanted(mouseX))
+            }
+        }
+        onPositionChanged: bar.moved(bar.wanted(bar.vertical ? mouseY : mouseX))
+    }
+}

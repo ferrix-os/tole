@@ -20,6 +20,7 @@ mod damage;
 mod exclusive;
 mod flick;
 mod focus;
+mod folder;
 pub mod handles;
 mod input;
 mod item;
@@ -27,9 +28,11 @@ mod layout;
 mod layouts;
 mod model;
 pub mod png;
+mod popup;
 mod render;
 mod repeater;
 mod signal;
+mod split;
 mod text;
 mod textinput;
 mod ui;
@@ -41,15 +44,18 @@ pub mod window;
 pub use anim::{Animate, Easing, StateValue, Step, Transition, Tween, When};
 pub use cpu::CpuRenderer;
 pub use focus::{KeyEvent, Nav};
+pub use folder::{FileEntry, expand_home};
 pub use handles::Element;
 pub use input::{Cursor, cursor_shape};
 pub use item::{
-    Common, FlickProps, FlowProps, GridProps, ItemId, Kind, KindName, ListViewProps,
-    MouseAreaProps, PositionerProps, RectangleProps, RepeaterProps, TextInputProps, TextProps,
+    Common, FlickProps, FlowProps, FolderProps, GridProps, ItemId, Kind, KindName, ListViewProps,
+    MouseAreaProps, PopupProps, PositionerProps, RectangleProps, RepeaterProps, SplitProps,
+    TextInputProps, TextProps,
 };
 pub use layout::{Anchors, Line};
 pub use layouts::{LayoutProps, Solved, align};
 pub use model::{AnyModel, Change, Model, ModelRc, ModelSource, ModelTracker, VecModel};
+pub use popup::close_policy;
 pub use render::{DrawOp, Rect, Renderer, play};
 pub use repeater::{Delegate, DelegateFactory};
 pub use signal::{Emitted, Handler, SignalId};

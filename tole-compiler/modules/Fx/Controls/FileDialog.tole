@@ -1,0 +1,148 @@
+// A file chooser inside the window, over everything else: the folder as
+// a path to type into, Up, its entries (a double click opens a folder or
+// chooses a file), hidden files on request, and Open and Cancel.
+// `accepted` with the chosen file's path; `folder` is where it opens.
+import Fx
+
+component FileDialog : Popup {
+    id: dialog
+    property string title: "Choose a file"
+    property alias folder: entries.folder
+    property alias showHidden: entries.showHidden
+    property string selectedFile
+    // Its name alone, as shown at the foot.
+    property string selectedName
+    signal accepted(string path)
+    signal rejected()
+
+    modal: true
+    closePolicy: Popup.CloseOnEscape
+    width: 520
+    height: 420
+
+    FolderListModel { id: entries }
+
+    Rectangle {
+        anchors.fill: parent
+        radius: 10
+        color: Theme.bg
+        border.width: 1
+        border.color: Theme.line3
+    }
+    Text {
+        x: 16; y: 14
+        text: dialog.title
+        font: Theme.sans(15, 600)
+        color: Theme.ink
+    }
+    RowLayout {
+        x: 16; y: 44
+        width: dialog.width - 32
+        spacing: 8
+        Button {
+            text: "Up"
+            enabled: entries.parentFolder != ""
+            onClicked: entries.folder = entries.parentFolder
+        }
+        TextField {
+            id: where
+            Layout.fillWidth: true
+            text: entries.path
+            onAccepted: entries.folder = where.text
+        }
+    }
+    Rectangle {
+        id: frame
+        x: 16; y: 84
+        width: dialog.width - 32
+        height: dialog.height - 84 - 92
+        radius: Theme.radius
+        color: Theme.bg2
+        border.width: 1
+        border.color: Theme.line
+        clip: true
+        ListView {
+            id: list
+            x: 1; y: 1
+            width: parent.width - 14
+            height: parent.height - 2
+            model: entries.files
+            delegate: Rectangle {
+                width: list.width
+                height: 26
+                color: index == list.currentIndex ? Theme.accentBg : row.containsMouse ? Theme.hover : "transparent"
+                Text {
+                    x: 10
+                    height: parent.height
+                    width: parent.width - 20
+                    elide: Text.ElideRight
+                    text: modelData.isDir ? modelData.name + "/" : modelData.name
+                    font: Theme.sans(13, modelData.isDir ? 500 : 400)
+                    color: modelData.isDir ? Theme.ink2 : Theme.ink
+                }
+                MouseArea {
+                    id: row
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: {
+                        list.currentIndex = index
+                        if (!modelData.isDir) { dialog.selectedFile = modelData.path; dialog.selectedName = modelData.name }
+                    }
+                    onDoubleClicked: {
+                        if (modelData.isDir) {
+                            entries.folder = modelData.path
+                            list.currentIndex = -1
+                            dialog.selectedFile = ""
+                            dialog.selectedName = ""
+                        } else {
+                            dialog.selectedFile = modelData.path
+                            dialog.accepted(modelData.path)
+                            dialog.close()
+                        }
+                    }
+                }
+            }
+        }
+        ScrollBar {
+            anchors.right: parent.right
+            y: 1
+            height: parent.height - 2
+            size: list.contentHeight > 0 ? list.height / list.contentHeight : 1
+            position: list.contentHeight > 0 ? list.contentY / list.contentHeight : 0
+            onMoved: list.contentY = position * list.contentHeight
+        }
+    }
+    CheckBox {
+        x: 16
+        y: dialog.height - 74
+        text: "Show hidden files"
+        checked: entries.showHidden
+        onToggled: entries.showHidden = checked
+    }
+    Text {
+        x: 16
+        y: dialog.height - 42
+        width: dialog.width - 220
+        height: 30
+        elide: Text.ElideRight
+        text: dialog.selectedName
+        font: Theme.sans(12, 400)
+        color: Theme.ink4
+    }
+    Row {
+        anchors.right: parent.right
+        anchors.rightMargin: 16
+        y: dialog.height - 46
+        spacing: 8
+        Button {
+            text: "Cancel"
+            onClicked: { dialog.rejected(); dialog.close() }
+        }
+        Button {
+            text: "Open"
+            highlighted: true
+            enabled: dialog.selectedFile != ""
+            onClicked: { dialog.accepted(dialog.selectedFile); dialog.close() }
+        }
+    }
+}

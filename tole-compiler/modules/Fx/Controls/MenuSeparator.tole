@@ -1,0 +1,13 @@
+// A line between groups of a Menu's items.
+import Fx
+
+component MenuSeparator : Item {
+    width: parent.width
+    height: 9
+    Rectangle {
+        y: 4
+        width: parent.width
+        height: 1
+        color: Theme.line
+    }
+}

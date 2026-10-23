@@ -39,6 +39,8 @@ pub(crate) enum Ty {
     ModelSource,
     /// An animation's `easing.type`.
     Easing,
+    /// A folder's entry, as a `FolderListModel` gives it.
+    FileEntry,
 }
 
 impl Ty {
@@ -56,6 +58,7 @@ impl Ty {
             "color" => Ty::Color,
             "font" => Ty::Font,
             "KeyEvent" => Ty::KeyEvent,
+            "FileEntry" => Ty::FileEntry,
             other if other.starts_with("list<") && other.ends_with('>') => {
                 let inner = other.get(5..other.len() - 1)?;
                 Ty::List(Box::new(Ty::named(inner, structs, enums)?))
@@ -87,6 +90,7 @@ impl Ty {
             Ty::Model(inner) => format!("::tole::ModelRc<{}>", inner.rust()),
             Ty::ModelSource => "::tole::ModelSource".to_owned(),
             Ty::Easing => "::tole::Easing".to_owned(),
+            Ty::FileEntry => "::tole::FileEntry".to_owned(),
             Ty::Enum(name) | Ty::Struct(name) => name.clone(),
         }
     }
@@ -108,6 +112,7 @@ impl Ty {
             Ty::Model(inner) => format!("model<{}>", inner.name()),
             Ty::ModelSource => "count, list or model".to_owned(),
             Ty::Easing => "easing curve".to_owned(),
+            Ty::FileEntry => "FileEntry".to_owned(),
             Ty::Enum(name) | Ty::Struct(name) => name.clone(),
         }
     }
@@ -121,6 +126,10 @@ impl Ty {
             (Ty::KeyEvent, "control") => Some(("control", Ty::Bool)),
             (Ty::KeyEvent, "alt") => Some(("alt", Ty::Bool)),
             (Ty::KeyEvent, "isAutoRepeat") => Some(("repeat", Ty::Bool)),
+            (Ty::FileEntry, "name") => Some(("name", Ty::Str)),
+            (Ty::FileEntry, "path") => Some(("path", Ty::Str)),
+            (Ty::FileEntry, "isDir") => Some(("is_dir", Ty::Bool)),
+            (Ty::FileEntry, "size") => Some(("size", Ty::Real)),
             _ => None,
         }
     }
@@ -168,6 +177,14 @@ pub(crate) enum Kind {
     TextInput,
     /// `TextEdit`.
     TextEdit,
+    /// `Popup`.
+    Popup,
+    /// `SplitView`.
+    SplitView,
+    /// `SplitView` with `orientation: Qt.Vertical`.
+    SplitViewVertical,
+    /// `FolderListModel`.
+    FolderListModel,
 }
 
 impl Kind {
@@ -191,6 +208,9 @@ impl Kind {
             "ListView" => Kind::ListView,
             "TextInput" => Kind::TextInput,
             "TextEdit" => Kind::TextEdit,
+            "Popup" => Kind::Popup,
+            "SplitView" => Kind::SplitView,
+            "FolderListModel" => Kind::FolderListModel,
             _ => return None,
         })
     }
@@ -215,6 +235,10 @@ impl Kind {
             Kind::ListView => "::tole::handles::ListView",
             Kind::TextInput => "::tole::handles::TextInput",
             Kind::TextEdit => "::tole::handles::TextEdit",
+            Kind::Popup => "::tole::handles::Popup",
+            Kind::SplitView => "::tole::handles::SplitView",
+            Kind::SplitViewVertical => "::tole::handles::SplitViewVertical",
+            Kind::FolderListModel => "::tole::handles::FolderListModel",
         }
     }
 
@@ -291,6 +315,24 @@ impl Kind {
             (Kind::MouseArea, ["mouseX"]) => Some((".props.mouse_x", Ty::Real)),
             (Kind::MouseArea, ["mouseY"]) => Some((".props.mouse_y", Ty::Real)),
             (Kind::MouseArea, ["cursorShape"]) => Some((".props.cursor_shape", Ty::Int)),
+            (Kind::Popup, ["closePolicy"]) => Some((".props.close_policy", Ty::Int)),
+            (Kind::Popup, ["modal"]) => Some((".props.modal", Ty::Bool)),
+            (Kind::Popup, ["dimColor"]) => Some((".props.dim_color", Ty::Color)),
+            (Kind::SplitView | Kind::SplitViewVertical, ["spacing"]) => {
+                Some((".props.flow.spacing", Ty::Real))
+            }
+            (Kind::SplitView | Kind::SplitViewVertical, ["handleColor"]) => {
+                Some((".props.handle_color", Ty::Color))
+            }
+            (Kind::FolderListModel, [name]) => match *name {
+                "folder" => Some((".props.folder", Ty::Str)),
+                "showHidden" => Some((".props.show_hidden", Ty::Bool)),
+                "showFiles" => Some((".props.show_files", Ty::Bool)),
+                "files" => Some((".props.files", Ty::Model(Box::new(Ty::FileEntry)))),
+                "parentFolder" => Some((".props.parent_folder", Ty::Str)),
+                "path" => Some((".props.path", Ty::Str)),
+                _ => None,
+            },
             (Kind::TextInput | Kind::TextEdit, [name]) => match *name {
                 "text" => Some((".props.text", Ty::Str)),
                 "color" => Some((".props.color", Ty::Color)),
@@ -420,6 +462,16 @@ pub(crate) fn builtin_constant(space: &str, name: &str) -> Option<(&'static str,
         ("Qt", "PointingHandCursor") => ("::tole::cursor_shape::POINTING_HAND", Ty::Int),
         ("Qt", "SplitHCursor") => ("::tole::cursor_shape::SPLIT_H", Ty::Int),
         ("Qt", "SplitVCursor") => ("::tole::cursor_shape::SPLIT_V", Ty::Int),
+        ("Qt", "Horizontal") => ("1_i32", Ty::Int),
+        ("Qt", "Vertical") => ("2_i32", Ty::Int),
+        ("Popup", "NoAutoClose") => ("::tole::close_policy::NO_AUTO_CLOSE", Ty::Int),
+        ("Popup", "CloseOnPressOutside") => {
+            ("::tole::close_policy::CLOSE_ON_PRESS_OUTSIDE", Ty::Int)
+        }
+        ("Popup", "CloseOnEscape") => ("::tole::close_policy::CLOSE_ON_ESCAPE", Ty::Int),
+        ("Popup", "CloseOnReleaseInside") => {
+            ("::tole::close_policy::CLOSE_ON_RELEASE_INSIDE", Ty::Int)
+        }
         ("TextInput", "Normal") => ("::tole::echo::NORMAL", Ty::Int),
         ("TextInput", "Password") => ("::tole::echo::PASSWORD", Ty::Int),
         ("TextEdit", "NoWrap") => ("::tole::wrap::NO_WRAP", Ty::Int),

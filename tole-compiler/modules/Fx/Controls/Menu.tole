@@ -1,0 +1,26 @@
+// A list of actions over everything: `open()` it where it should be
+// (its `x` and `y` are from its parent), and a click on a MenuItem says
+// that item's `triggered` and closes it, as do Escape and a press
+// outside.
+import Fx
+
+component Menu : Popup {
+    id: menu
+    default property alias content: column
+    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside | Popup.CloseOnReleaseInside
+    width: 200
+    height: column.implicitHeight + 8
+
+    Rectangle {
+        anchors.fill: parent
+        radius: Theme.radius
+        color: Theme.bg
+        border.width: 1
+        border.color: Theme.line3
+    }
+    Column {
+        id: column
+        x: 4; y: 4
+        width: menu.width - 8
+    }
+}

@@ -576,7 +576,8 @@ component Transitions : Rectangle {
 
 `import Fx.Controls` brings the framework's controls: `Button`,
 `CheckBox`, `RadioButton`, `Switch`, `Label`, `ProgressBar`, `TabBar`,
-`GroupBox`, `TextField` and `TextArea` so far, each a `.tole` file
+`GroupBox`, `TextField`, `TextArea`, `ComboBox`, `Menu` with `MenuItem`
+and `MenuSeparator`, `ScrollBar` and `FileDialog`, each a `.tole` file
 inside the compiler, written on the primitives as Qt Quick Controls are
 in QML. There is one style;
 every colour, radius and face in it is a token of the `Theme`
@@ -678,6 +679,121 @@ held. In a window, copies and pastes go through the desktop's clipboard
 keeps its last copy itself. A password (`echoMode: TextInput.Password`)
 shows dots and is never copied.
 
+### Popups, menus, a split and a file chooser
+
+A `Popup` is drawn over everything in the window and takes the pointer
+first while it is shown, placed from its parent but outside any cut
+around it. A press outside closes it (and does nothing else, so the
+press that closes a menu clicks nothing under it), as Escape does; a
+`Menu` also closes once an item is clicked. A `ComboBox` opens its list
+in one. A `SplitView` places its children as a `RowLayout` does, and
+the handle between two drags the first one's `Layout.preferredWidth`.
+A `ScrollBar` is bound to what it scrolls and says `moved` when dragged.
+The picture is after a click on the combo box, the menu opened by the
+program and the pointer resting on "Copy cursor".
+
+```qml
+// Over everything: a ComboBox's list and a Menu, open, and a SplitView
+// whose left side is a list with a ScrollBar. The handle between the
+// two sides drags; the list scrolls by the wheel or the bar.
+import Fx
+import Fx.Controls
+
+component Popups : Rectangle {
+    width: 720; height: 420
+    color: Theme.bg2
+
+    SplitView {
+        anchors.fill: parent
+        handleColor: Theme.line
+
+        Rectangle {
+            Layout.preferredWidth: 220
+            Layout.minimumWidth: 120
+            color: Theme.bg
+            ListView {
+                id: boots
+                x: 0; y: 8
+                width: parent.width - 12
+                height: parent.height - 16
+                model: 40
+                delegate: Rectangle {
+                    width: boots.width
+                    height: 28
+                    color: index == 3 ? Theme.accentBg : "transparent"
+                    Text {
+                        x: 14
+                        height: parent.height
+                        text: "Boot ${index + 1}"
+                        font: Theme.sans(13, index == 3 ? 600 : 400)
+                        color: Theme.ink
+                    }
+                }
+            }
+            ScrollBar {
+                anchors.right: parent.right
+                y: 8
+                height: parent.height - 16
+                size: boots.height / boots.contentHeight
+                position: boots.contentY / boots.contentHeight
+                onMoved: boots.contentY = position * boots.contentHeight
+            }
+        }
+        Item {
+            Layout.fillWidth: true
+            Column {
+                x: 24; y: 24
+                spacing: 12
+                Label { text: "Machine"; font: Theme.sans(11, 600); color: Theme.ink4 }
+                ComboBox {
+                    id: machine
+                    width: 220
+                    model: ["nazuna", "pixel7", "dk1", "n150"]
+                    currentIndex: 1
+                }
+            }
+            Button {
+                id: more
+                x: 250; y: 52
+                text: "Actions"
+                onClicked: actions.open()
+            }
+            Menu {
+                id: actions
+                x: 250; y: 88
+                MenuItem { text: "Copy record"; shortcut: "Ctrl+C" }
+                MenuItem { text: "Copy cursor" }
+                MenuSeparator { }
+                MenuItem { text: "Open in new window"; shortcut: "Ctrl+N" }
+                MenuItem { text: "Forget machine"; enabled: false }
+            }
+        }
+    }
+}
+
+component Chooser : Rectangle {
+    width: 640; height: 480
+    color: Theme.bg2
+    Label { x: 20; y: 20; text: "Add machine"; font: Theme.sans(18, 600) }
+    FileDialog {
+        id: chooser
+        anchors.centerIn: parent
+        title: "Choose the key file"
+    }
+}
+```
+
+![popups](docs/screenshots/popups.png)
+
+The `FileDialog` lists a folder through a `FolderListModel` (folders
+first, hidden files on request): a double click opens a folder or
+chooses a file, Up goes to the folder above, and the path field takes a
+folder typed in, `~` and all. It is modal: the window behind is dimmed
+and takes no pointer while it is open. Here, dark, after a click on a
+key file:
+
+![file chooser](docs/screenshots/file-chooser.png)
+
 ### In a window
 
 Every demo also runs in a window on the Wayland desktop it is started
@@ -695,8 +811,8 @@ alone are drawn and handed to the compositor. A test holds the kept
 frame to what drawing the whole scene gives, pixel for pixel, as a
 rounded box wanders at scales 1, 1.5 and 2.
 
-More come as the framework reaches them: text fields, popups and the
-rest of the controls, a chart, and the lode viewer ported onto tole.
+More come as the framework reaches them: a chart, and the lode viewer
+ported onto tole.
 
 ## Crates
 

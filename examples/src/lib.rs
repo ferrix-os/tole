@@ -58,7 +58,7 @@ pub fn find_text(ui: &mut Ui, label: &str) -> Option<tole::ItemId> {
 }
 
 /// Every demo, in the README's order.
-pub const DEMOS: [Demo; 9] = [
+pub const DEMOS: [Demo; 11] = [
     Demo {
         name: "hello",
         about: "the smallest program",
@@ -132,7 +132,69 @@ pub const DEMOS: [Demo; 9] = [
         about: "the same, Theme.dark set",
         make: |ui| controls(ui, true),
     },
+    Demo {
+        name: "popups",
+        about: "a ComboBox's list and a Menu open over a SplitView with a scrolled list",
+        make: popups,
+    },
+    Demo {
+        name: "file-chooser",
+        about: "the FileDialog over a window, dark, on a folder kept for it",
+        make: chooser,
+    },
 ];
+
+/// The popups demo: the combo box opened by a click, the menu by the
+/// program, an item of it under the pointer, and the list scrolled.
+fn popups(ui: &mut Ui) -> Option<tole::Common> {
+    let theme = fx_controls::Theme::instance(ui);
+    theme.dark.set(ui, false);
+    let root = Popups::new(ui, None)?;
+    let list = find_kind(ui, |k| matches!(k, tole::Kind::ListView(_)))?;
+    if let Some(flick) = ui.flickable(list) {
+        flick.content_y.set(ui, 64.0);
+    }
+    press(ui, "pixel7", true)?;
+    let menu = find_text(ui, "Copy record").and_then(|t| popup_of(ui, t))?;
+    ui.open_popup(menu);
+    press(ui, "Copy cursor", false)?;
+    Some(root.common())
+}
+
+/// The file chooser demo: the dialog open on `fixtures/machines`, a key
+/// chosen; the path field shows it as a person's home would.
+fn chooser(ui: &mut Ui) -> Option<tole::Common> {
+    let theme = fx_controls::Theme::instance(ui);
+    theme.dark.set(ui, true);
+    let root = Chooser::new(ui, None)?;
+    let model = find_kind(ui, |k| matches!(k, tole::Kind::FolderListModel(_)))?;
+    let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/machines/keys");
+    let props = ui.folder_list(model)?;
+    props
+        .folder
+        .set(ui, folder.to_string_lossy().as_ref().into());
+    let dialog = popup_of(ui, model)?;
+    ui.open_popup(dialog);
+    ui.update();
+    let field = find_input(ui, &folder.to_string_lossy())?;
+    let text = ui.text_input(field)?;
+    text.text.set(ui, "~/machines/keys".into());
+    press(ui, "id_ed25519", true)?;
+    ui.pointer_leave();
+    Some(root.common())
+}
+
+/// The `Popup` around `item`.
+pub fn popup_of(ui: &Ui, item: tole::ItemId) -> Option<tole::ItemId> {
+    let mut at = ui.parent(item);
+    while let Some(above) = at {
+        if ui.popup(above).is_some() {
+            return Some(above);
+        }
+        at = ui.parent(above);
+    }
+    None
+}
 
 /// The controls demo, light or dark, with "nazuna" double-clicked in its
 /// first field.
@@ -600,6 +662,131 @@ mod tests {
                 .iter()
                 .any(|e| field.signal(e) == Some(TextFieldSignal::Accepted))
         );
+    }
+
+    #[test]
+    fn a_combo_box_opens_over_everything_and_a_press_outside_closes_it() {
+        let mut ui = tole::Ui::new(super::fonts());
+        let root = super::Popups::new(&mut ui, None).expect("made");
+        let _ = ui.render((720, 420), tole::Color::TRANSPARENT);
+        let shown = |ui: &mut tole::Ui, label: &str| {
+            let text = super::find_text(ui, label).expect("there");
+            let popup = super::popup_of(ui, text).expect("in a popup");
+            ui.get(ui.common(popup).expect("lives").visible)
+        };
+        assert!(!shown(&mut ui, "n150"));
+        super::press(&mut ui, "pixel7", true).expect("clicked");
+        assert!(shown(&mut ui, "n150"));
+        // Chosen: the list closes and the combo box says it.
+        super::press(&mut ui, "dk1", true).expect("clicked");
+        assert!(!shown(&mut ui, "n150"));
+        assert!(super::find_text(&mut ui, "dk1").is_some());
+        // A press outside closes it and does nothing else: "Actions"
+        // under it is not clicked.
+        super::press(&mut ui, "dk1", true).expect("clicked");
+        assert!(shown(&mut ui, "n150"));
+        super::press(&mut ui, "Actions", true).expect("clicked");
+        assert!(!shown(&mut ui, "n150"));
+        assert!(!shown(&mut ui, "Copy record"), "the press was the popup's");
+        // Now Actions opens the menu; a click on an item closes it; Escape
+        // closes it too.
+        super::press(&mut ui, "Actions", true).expect("clicked");
+        assert!(shown(&mut ui, "Copy record"));
+        super::press(&mut ui, "Copy cursor", true).expect("clicked");
+        assert!(!shown(&mut ui, "Copy record"));
+        super::press(&mut ui, "Actions", true).expect("clicked");
+        super::key(&mut ui, "Escape");
+        assert!(!shown(&mut ui, "Copy record"));
+        // Keys step the combo box.
+        let combo = super::find_text(&mut ui, "dk1")
+            .and_then(|t| ui.parent(t))
+            .expect("the combo box");
+        ui.force_active_focus(combo);
+        super::key(&mut ui, "Down");
+        let label = ui.children(combo)[0];
+        let text = ui.text(label).expect("its label");
+        assert_eq!(&*ui.get(text.text), "n150");
+        let _ = root;
+    }
+
+    #[test]
+    fn a_split_view_handle_drags_and_a_scroll_bar_scrolls() {
+        let mut ui = tole::Ui::new(super::fonts());
+        let _root = super::Popups::new(&mut ui, None).expect("made");
+        let _ = ui.render((720, 420), tole::Color::TRANSPARENT);
+        let split =
+            super::find_kind(&ui, |k| matches!(k, tole::Kind::SplitView(_))).expect("split");
+        let left = ui.children(split)[0];
+        let width = |ui: &mut tole::Ui| ui.get(ui.common(left).expect("lives").width);
+        assert_eq!(width(&mut ui), 220.0);
+        ui.pointer_move(221.0, 300.0);
+        assert_eq!(ui.take_cursor(), Some(tole::Cursor::ColResize));
+        ui.pointer_press();
+        ui.pointer_move(301.0, 300.0);
+        ui.pointer_release();
+        assert_eq!(width(&mut ui), 300.0);
+        ui.pointer_move(1.0, 300.0);
+        ui.pointer_press();
+        ui.pointer_move(-500.0, 300.0);
+        ui.pointer_release();
+        // Not past the handle's own room: the press at 1 is no handle.
+        assert_eq!(width(&mut ui), 300.0);
+        // The bar: a drag to its foot scrolls the list to its end.
+        let list = super::find_kind(&ui, |k| matches!(k, tole::Kind::ListView(_))).expect("list");
+        let flick = ui.flickable(list).expect("flick");
+        let bar_x = 300.0 - 6.0;
+        ui.pointer_move(bar_x, 30.0);
+        ui.pointer_press();
+        ui.pointer_move(bar_x, 1000.0);
+        ui.pointer_release();
+        let end = ui.get(flick.content_y);
+        let most = 40.0 * 28.0 - (420.0 - 16.0);
+        assert!((end - most).abs() < 1.0, "{end} of {most}");
+    }
+
+    #[test]
+    fn the_file_dialog_walks_folders_and_chooses_a_file() {
+        use super::fx_controls::{FileDialog, FileDialogSignal};
+        let mut ui = tole::Ui::new(super::fonts());
+        let root = tole::handles::Item::new(&mut ui, None).expect("made");
+        root.common.width.set(&mut ui, 640.0);
+        root.common.height.set(&mut ui, 480.0);
+        let dialog = FileDialog::new(&mut ui, Some(root.id)).expect("made");
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/machines");
+        dialog
+            .folder
+            .set(&mut ui, dir.to_string_lossy().as_ref().into());
+        ui.open_popup(tole::Element::id(&dialog));
+        let _ = ui.render((640, 480), tole::Color::TRANSPARENT);
+        assert!(
+            super::find_text(&mut ui, "keys/").is_some(),
+            "folders first, marked"
+        );
+        assert!(super::find_text(&mut ui, ".hidden").is_none());
+        super::press(&mut ui, "Show hidden files", true).expect("clicked");
+        let _ = ui.render((640, 480), tole::Color::TRANSPARENT);
+        assert!(super::find_text(&mut ui, ".hidden").is_some());
+        // A double click opens a folder.
+        super::press(&mut ui, "keys/", true).expect("clicked");
+        super::press(&mut ui, "keys/", true).expect("clicked");
+        let _ = ui.render((640, 480), tole::Color::TRANSPARENT);
+        assert!(super::find_text(&mut ui, "id_ed25519.pub").is_some());
+        // Up goes back.
+        super::press(&mut ui, "Up", true).expect("clicked");
+        let _ = ui.render((640, 480), tole::Color::TRANSPARENT);
+        assert!(super::find_text(&mut ui, "hosts.txt").is_some());
+        let _ = ui.take_signals();
+        ui.tick(5000.0);
+        super::press(&mut ui, "hosts.txt", true).expect("clicked");
+        super::press(&mut ui, "Open", true).expect("clicked");
+        let chosen: Vec<FileDialogSignal> = ui
+            .take_signals()
+            .iter()
+            .filter_map(|e| dialog.signal(e))
+            .collect();
+        let want = dir.join("hosts.txt").to_string_lossy().into_owned();
+        assert_eq!(chosen, [FileDialogSignal::Accepted(want.into())]);
+        assert!(!ui.get(tole::Element::common(&dialog).visible), "closed");
     }
 
     #[test]

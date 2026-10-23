@@ -59,6 +59,8 @@ enum Hit {
     Area(MouseAreaProps),
     /// A `TextInput` or `TextEdit`.
     Text,
+    /// A `SplitView`'s handle: the child before it, and its size then.
+    Split(ItemId, f32),
 }
 
 /// The pointer's state.
@@ -74,10 +76,15 @@ pub(crate) struct Input {
     last_press: Option<(f64, f32, f32, u32)>,
     /// Whether Shift is held, as the window says.
     shift: bool,
+    /// The popup being hit-tested now, over the rest.
+    pub(crate) overlay: Option<ItemId>,
     /// The shape it has now.
     cursor: Cursor,
     /// Whether the shape changed since the window last asked.
     cursor_changed: bool,
+    /// A `SplitView` handle being dragged: the child before it, its size
+    /// when the press came, and where the press was along the split.
+    split: Option<(ItemId, f32, f32)>,
 }
 
 impl Ui {
@@ -86,6 +93,10 @@ impl Ui {
         self.update();
         self.input.at = Some((x, y));
         if let Some(grab) = self.input.grab {
+            if let Some((child, start, from)) = self.input.split {
+                let along = if self.split_vertical(grab) { y } else { x };
+                self.split_drag(child, start + along - from);
+            }
             self.follow(grab, x, y, true);
         }
         self.rehover();
@@ -122,6 +133,10 @@ impl Ui {
             _ => 1,
         };
         self.input.last_press = Some((now, x, y, clicks));
+        if self.press_outside_popups(x, y) {
+            self.rehover();
+            return;
+        }
         let Some((item, hit)) = self.hits_at(x, y).into_iter().last() else {
             return;
         };
@@ -135,6 +150,10 @@ impl Ui {
                 if clicks == 2 {
                     self.emit(area.double_clicked, Vec::new());
                 }
+            }
+            Hit::Split(child, start) => {
+                let along = if self.split_vertical(item) { y } else { x };
+                self.input.split = Some((child, start, along));
             }
             Hit::Text => {
                 self.force_active_focus(item);
@@ -152,7 +171,9 @@ impl Ui {
         let Some(item) = self.input.grab.take() else {
             return;
         };
+        self.input.split = None;
         let Some(area) = self.mouse_area(item) else {
+            self.rehover();
             return;
         };
         let inside = match (self.input.at, self.rect_of(item)) {
@@ -163,6 +184,7 @@ impl Ui {
         self.emit(area.released, Vec::new());
         if inside {
             self.emit(area.clicked, Vec::new());
+            self.released_inside_popup(item);
         }
         if self.input.hover != Some(item) {
             area.contains_mouse.set(self, false);
@@ -208,11 +230,15 @@ impl Ui {
             Some((x, y)) => self.hits_at(x, y),
             None => Vec::new(),
         };
-        let shape = match self
+        let under = self
             .input
             .grab
-            .or_else(|| hits.last().map(|(item, _)| *item))
-        {
+            .or_else(|| hits.last().map(|(item, _)| *item));
+        let on_handle =
+            self.input.split.is_some() || matches!(hits.last(), Some((_, Hit::Split(..))));
+        let shape = match under {
+            Some(item) if on_handle && self.split_vertical(item) => Cursor::RowResize,
+            Some(_) if on_handle => Cursor::ColResize,
             Some(item) => self.cursor_of(item),
             None => Cursor::Default,
         };
@@ -320,7 +346,7 @@ impl Ui {
             .into_iter()
             .filter_map(|(item, hit)| match hit {
                 Hit::Area(area) => Some((item, area)),
-                Hit::Text => None,
+                Hit::Text | Hit::Split(..) => None,
             })
             .collect()
     }
@@ -332,6 +358,12 @@ impl Ui {
         for root in self.roots.clone() {
             self.hits_in(root, (0.0, 0.0), None, (x, y), &mut out);
         }
+        // The popups over it all, outside every cut.
+        for (popup, origin) in self.popups_shown() {
+            self.input.overlay = Some(popup);
+            self.hits_in(popup, origin, None, (x, y), &mut out);
+        }
+        self.input.overlay = None;
         out
     }
 
@@ -351,6 +383,9 @@ impl Ui {
         if !self.get(common.visible) || !self.get(common.enabled) {
             return;
         }
+        if self.popup(item).is_some() && self.input.overlay != Some(item) {
+            return;
+        }
         let rect = Rect::new(
             origin.0 + self.get(common.x),
             origin.1 + self.get(common.y),
@@ -359,11 +394,23 @@ impl Ui {
         );
         let inside = clip.is_none_or(|clip| clip.contains(point.0, point.1))
             && rect.contains(point.0, point.1);
+        // A modal popup hides what is under it from the pointer.
+        if let Some(props) = self.popup(item)
+            && self.get(props.modal)
+        {
+            out.clear();
+        }
         match self.kind(item) {
             Some(Kind::MouseArea(area)) if inside => out.push((item, Hit::Area(area))),
             Some(Kind::TextInput(_)) if inside => out.push((item, Hit::Text)),
             _ => {}
         }
+        // A split's handles are over its children's edges.
+        let handle = if inside && matches!(self.kind(item), Some(Kind::SplitView(_))) {
+            self.split_handle_at(item, rect, point)
+        } else {
+            None
+        };
         let clip = if self.get(common.clip) {
             Some(clip.map_or(rect, |outer| outer.intersect(&rect)))
         } else {
@@ -371,6 +418,9 @@ impl Ui {
         };
         for child in self.children(item).to_vec() {
             self.hits_in(child, (rect.x, rect.y), clip, point, out);
+        }
+        if let Some((child, size)) = handle {
+            out.push((item, Hit::Split(child, size)));
         }
     }
 }

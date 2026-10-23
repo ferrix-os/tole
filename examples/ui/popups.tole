@@ -1,0 +1,88 @@
+// Over everything: a ComboBox's list and a Menu, open, and a SplitView
+// whose left side is a list with a ScrollBar. The handle between the
+// two sides drags; the list scrolls by the wheel or the bar.
+import Fx
+import Fx.Controls
+
+component Popups : Rectangle {
+    width: 720; height: 420
+    color: Theme.bg2
+
+    SplitView {
+        anchors.fill: parent
+        handleColor: Theme.line
+
+        Rectangle {
+            Layout.preferredWidth: 220
+            Layout.minimumWidth: 120
+            color: Theme.bg
+            ListView {
+                id: boots
+                x: 0; y: 8
+                width: parent.width - 12
+                height: parent.height - 16
+                model: 40
+                delegate: Rectangle {
+                    width: boots.width
+                    height: 28
+                    color: index == 3 ? Theme.accentBg : "transparent"
+                    Text {
+                        x: 14
+                        height: parent.height
+                        text: "Boot ${index + 1}"
+                        font: Theme.sans(13, index == 3 ? 600 : 400)
+                        color: Theme.ink
+                    }
+                }
+            }
+            ScrollBar {
+                anchors.right: parent.right
+                y: 8
+                height: parent.height - 16
+                size: boots.height / boots.contentHeight
+                position: boots.contentY / boots.contentHeight
+                onMoved: boots.contentY = position * boots.contentHeight
+            }
+        }
+        Item {
+            Layout.fillWidth: true
+            Column {
+                x: 24; y: 24
+                spacing: 12
+                Label { text: "Machine"; font: Theme.sans(11, 600); color: Theme.ink4 }
+                ComboBox {
+                    id: machine
+                    width: 220
+                    model: ["nazuna", "pixel7", "dk1", "n150"]
+                    currentIndex: 1
+                }
+            }
+            Button {
+                id: more
+                x: 250; y: 52
+                text: "Actions"
+                onClicked: actions.open()
+            }
+            Menu {
+                id: actions
+                x: 250; y: 88
+                MenuItem { text: "Copy record"; shortcut: "Ctrl+C" }
+                MenuItem { text: "Copy cursor" }
+                MenuSeparator { }
+                MenuItem { text: "Open in new window"; shortcut: "Ctrl+N" }
+                MenuItem { text: "Forget machine"; enabled: false }
+            }
+        }
+    }
+}
+
+component Chooser : Rectangle {
+    width: 640; height: 480
+    color: Theme.bg2
+    Label { x: 20; y: 20; text: "Add machine"; font: Theme.sans(18, 600) }
+    FileDialog {
+        id: chooser
+        anchors.centerIn: parent
+        title: "Choose the key file"
+    }
+}

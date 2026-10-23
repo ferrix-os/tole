@@ -8,6 +8,7 @@ use crate::item::{
     Common, FlickProps, FlowProps, GridProps, ItemId, KindName, ListViewProps, MouseAreaProps,
     PositionerProps, RectangleProps, RepeaterProps, TextInputProps, TextProps,
 };
+use crate::item::{FolderProps, PopupProps, SplitProps};
 use crate::ui::Ui;
 
 /// What every handle, and every component the compiler generates, is.
@@ -102,6 +103,22 @@ handle!(
     Repeater, Repeater, RepeaterProps, repeater
 );
 
+handle!(
+    /// A `Popup`.
+    Popup, Popup, PopupProps, popup
+);
+handle!(
+    /// A `SplitView`, its children across.
+    SplitView, SplitView, SplitProps, split
+);
+handle!(
+    /// A `SplitView`, its children down.
+    SplitViewVertical, SplitViewVertical, SplitProps, split
+);
+handle!(
+    /// A `FolderListModel`.
+    FolderListModel, FolderListModel, FolderProps, folder_list
+);
 handle!(
     /// A `TextInput`: one line typed into.
     TextInput, TextInput, TextInputProps, text_input

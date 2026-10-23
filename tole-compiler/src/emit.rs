@@ -273,7 +273,7 @@ impl Program {
                             _ => {}
                         }
                     }
-                    let base = match Kind::named(&root.kind.text) {
+                    let base = match kind_of(root) {
                         Some(kind) => ElemTy::Kind(kind),
                         None if singleton => ElemTy::Kind(Kind::Item),
                         None => ElemTy::Component(root.kind.text.clone()),
@@ -360,7 +360,7 @@ impl Program {
             if std::ptr::eq(element, &c.root) {
                 ElemTy::Component(name.to_owned())
             } else {
-                match Kind::named(&element.kind.text) {
+                match kind_of(element) {
                     Some(kind) => ElemTy::Kind(kind),
                     None => ElemTy::Component(element.kind.text.clone()),
                 }
@@ -836,7 +836,7 @@ impl Program {
         };
         for member in &element.members {
             if let Member::Child(child) = member {
-                let child_ty = match Kind::named(&child.kind.text) {
+                let child_ty = match kind_of(child) {
                     Some(kind) => ElemTy::Kind(kind),
                     None if self.components.contains_key(&child.kind.text) => {
                         ElemTy::Component(child.kind.text.clone())
@@ -1098,6 +1098,8 @@ impl Program {
         let method = |name: &str| match name {
             "forceActiveFocus" => Some("force_active_focus"),
             "selectAll" => Some("select_all"),
+            "open" => Some("open_popup"),
+            "close" => Some("close_popup"),
             _ => None,
         };
         match path {
@@ -1161,7 +1163,7 @@ impl Program {
                             return Err(diag(
                                 file,
                                 *pos,
-                                "`forceActiveFocus` and `selectAll` take no arguments",
+                                "`forceActiveFocus`, `selectAll`, `open` and `close` take no arguments",
                             ));
                         }
                         let _ = write!(out, "ui.{method}(::tole::Element::id(&{item})); ");
@@ -1375,6 +1377,24 @@ impl Program {
                         out,
                         "        ui.exclusive(::tole::Element::id(&{var}), {prop});"
                     );
+                    continue;
+                }
+                Member::Binding { path, expr }
+                    if matches!(path.as_slice(), [one] if one.text == "orientation")
+                        && matches!(
+                            ty,
+                            ElemTy::Kind(Kind::SplitView | Kind::SplitViewVertical)
+                        ) =>
+                {
+                    // Chose the kind when it was made.
+                    if !matches!(expr, Expr::Path(v) if matches!(v.as_slice(), [q, _] if q.text == "Qt"))
+                    {
+                        return Err(diag(
+                            file,
+                            expr.pos(),
+                            "a SplitView's `orientation` is `Qt.Horizontal` or `Qt.Vertical`, and stays",
+                        ));
+                    }
                     continue;
                 }
                 Member::Binding { path, expr } if matches!(path.as_slice(), [one] if one.text == "focus") =>
@@ -1735,7 +1755,7 @@ impl Program {
         let file = scope.file;
         let row_ty = row_ty.clone();
         let depth = scope.depth + 1;
-        let root_ty = match Kind::named(&delegate.kind.text) {
+        let root_ty = match kind_of(delegate) {
             Some(kind) => ElemTy::Kind(kind),
             None if self.components.contains_key(&delegate.kind.text) => {
                 ElemTy::Component(delegate.kind.text.clone())
@@ -3044,6 +3064,20 @@ impl Program {
                 }
                 self.function_call(scope, scope.component, name, codes, scope.this, pos)?
             }
+            [id, name]
+                if scope.ids.get(*id).is_some_and(|(_, ty)| {
+                    matches!(ty, ElemTy::Component(c) if self.components.get(c).is_some_and(|c| c.functions.contains_key(*name)))
+                }) =>
+            {
+                let Some((var, ElemTy::Component(key))) = scope.ids.get(*id) else {
+                    return Err(diag(file, pos, "no component"));
+                };
+                let Some(c) = self.components.get(key) else {
+                    return Err(diag(file, pos, "no component"));
+                };
+                let receiver = if var == "this" { scope.this } else { var.as_str() };
+                self.function_call(scope, c, name, codes, receiver, pos)?
+            }
             [space, name]
                 if self
                     .components
@@ -3338,6 +3372,22 @@ fn upper(name: &str) -> String {
 /// what `parent` is in it, and the local of the element it is made under
 /// (`None` for the root).
 type Walked<'e> = (String, ElemTy, &'e Element, Option<Target>, Option<String>);
+
+/// The kind of item `element` is, if it is one: a `SplitView` whose
+/// `orientation` is `Qt.Vertical` is the kind that places down.
+fn kind_of(element: &Element) -> Option<Kind> {
+    let kind = Kind::named(&element.kind.text)?;
+    let vertical = element.members.iter().any(|m| {
+        matches!(m, Member::Binding { path, expr: Expr::Path(value) }
+            if matches!(path.as_slice(), [p] if p.text == "orientation")
+                && matches!(value.as_slice(), [q, v] if q.text == "Qt" && v.text == "Vertical"))
+    });
+    Some(if kind == Kind::SplitView && vertical {
+        Kind::SplitViewVertical
+    } else {
+        kind
+    })
+}
 
 /// The last part of a key: the name its declaration is written with.
 fn short(key: &str) -> &str {

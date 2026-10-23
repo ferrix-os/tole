@@ -265,6 +265,9 @@ impl Ui {
     /// anything took it; a program may use one nobody took itself.
     pub fn key_press(&mut self, event: &KeyEvent) -> bool {
         self.update();
+        if &*event.key == "Escape" && self.escape_popup() {
+            return true;
+        }
         let start = self
             .active_focus_item()
             .or_else(|| self.focus_root())

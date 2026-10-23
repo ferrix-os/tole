@@ -41,6 +41,11 @@ pub(crate) struct Scene {
     pub(crate) clips: Vec<Rect>,
     /// The opacity groups open while building.
     pub(crate) opacity: Vec<f32>,
+    /// Popups met while building, each with where its parent is: drawn
+    /// after everything else.
+    pub(crate) popups: Vec<(ItemId, (f32, f32))>,
+    /// The popup being drawn now, over the rest.
+    pub(crate) overlay: Option<ItemId>,
 }
 
 impl Scene {

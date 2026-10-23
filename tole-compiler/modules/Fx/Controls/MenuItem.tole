@@ -1,0 +1,38 @@
+// One action of a Menu: its text, a shortcut shown beside it, and
+// `triggered` when it is clicked.
+import Fx
+
+component MenuItem : Rectangle {
+    id: item
+    property string text
+    property string shortcut
+    signal triggered()
+
+    width: parent.width
+    height: 28
+    radius: 4
+    opacity: enabled ? 1 : 0.45
+    color: area.containsMouse ? Theme.hover : "transparent"
+
+    Text {
+        x: 8
+        height: parent.height
+        text: item.text
+        font: Theme.sans()
+        color: Theme.ink
+    }
+    Text {
+        anchors.right: parent.right
+        anchors.rightMargin: 8
+        height: parent.height
+        text: item.shortcut
+        font: Theme.sans(12, 400)
+        color: Theme.ink4
+    }
+    MouseArea {
+        id: area
+        anchors.fill: parent
+        hoverEnabled: true
+        onClicked: item.triggered()
+    }
+}

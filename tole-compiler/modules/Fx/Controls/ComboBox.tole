@@ -1,0 +1,93 @@
+// One of a list, shown closed: a click opens the list over everything,
+// a click on an entry chooses it. Up and Down while it has the focus
+// step through the list, Space opens it. `activated` when a person
+// chose; `currentIndex` and `currentText` say what is chosen.
+import Fx
+
+component ComboBox : Rectangle {
+    id: combo
+    property list<string> model
+    property int currentIndex: 0
+    property string currentText: currentIndex >= 0 && currentIndex < model.length ? model[currentIndex] : ""
+    property bool hovered: area.containsMouse
+    signal activated(int index)
+
+    implicitWidth: max(label.implicitWidth + 44, 120)
+    implicitHeight: Theme.controlHeight
+    radius: Theme.radius
+    activeFocusOnTab: true
+    opacity: enabled ? 1 : 0.45
+    color: area.pressed ? Theme.line : hovered ? Theme.hover : Theme.bg
+    border.width: activeFocus ? 2 : 1
+    border.color: activeFocus ? Theme.accent : Theme.line3
+
+    Keys.onSpacePressed: list.open()
+    Keys.onUpPressed: if (currentIndex > 0) { currentIndex = currentIndex - 1; activated(currentIndex) }
+    Keys.onDownPressed: if (currentIndex < model.length - 1) { currentIndex = currentIndex + 1; activated(currentIndex) }
+
+    Text {
+        id: label
+        x: 10
+        width: parent.width - 34
+        height: parent.height
+        text: combo.currentText
+        elide: Text.ElideRight
+        font: Theme.sans()
+        color: Theme.ink
+    }
+    Text {
+        anchors.right: parent.right
+        anchors.rightMargin: 10
+        anchors.verticalCenter: parent.verticalCenter
+        text: "⌄"
+        font: Theme.sans(14, 600)
+        color: Theme.ink4
+    }
+    MouseArea {
+        id: area
+        anchors.fill: parent
+        hoverEnabled: true
+        onClicked: list.open()
+    }
+    Popup {
+        id: list
+        y: combo.height + 4
+        width: combo.width
+        height: entries.implicitHeight + 8
+        Rectangle {
+            anchors.fill: parent
+            radius: Theme.radius
+            color: Theme.bg
+            border.width: 1
+            border.color: Theme.line3
+        }
+        Column {
+            id: entries
+            x: 4; y: 4
+            Repeater {
+                model: combo.model
+                delegate: Rectangle {
+                    width: list.width - 8
+                    height: 28
+                    radius: 4
+                    color: pick.containsMouse ? Theme.hover : index == combo.currentIndex ? Theme.accentBg : "transparent"
+                    Text {
+                        x: 8
+                        height: parent.height
+                        width: parent.width - 16
+                        text: modelData
+                        elide: Text.ElideRight
+                        font: Theme.sans(13, index == combo.currentIndex ? 600 : 400)
+                        color: Theme.ink
+                    }
+                    MouseArea {
+                        id: pick
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: { combo.currentIndex = index; combo.activated(index); list.close() }
+                    }
+                }
+            }
+        }
+    }
+}

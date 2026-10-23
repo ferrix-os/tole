@@ -653,3 +653,48 @@ fn bad_modules_aliases_and_singletons_are_refused() {
         "2:2: `Exclusive.checked: checked` names a bool property"
     );
 }
+
+#[test]
+fn popups_splits_folders_and_item_methods() {
+    let rust = accepted(
+        r#"
+component P : Item {
+    SplitView {
+        orientation: Qt.Vertical
+        Item { id: top; Layout.preferredHeight: 100 }
+        Popup { id: pop; closePolicy: Popup.CloseOnEscape | Popup.CloseOnReleaseInside; modal: true }
+    }
+    FolderListModel { id: dir; folder: "~/.ssh"; showHidden: true }
+    ListView {
+        model: dir.files
+        delegate: Text { text: modelData.isDir ? modelData.name + "/" : modelData.name }
+    }
+    MouseArea { cursorShape: Qt.PointingHandCursor; onDoubleClicked: pop.open(); onPositionChanged: pop.close() }
+}
+"#,
+    );
+    assert!(
+        rust.contains("::tole::handles::SplitViewVertical::new("),
+        "{rust}"
+    );
+    assert!(
+        rust.contains(
+            "::tole::close_policy::CLOSE_ON_ESCAPE | ::tole::close_policy::CLOSE_ON_RELEASE_INSIDE"
+        ),
+        "{rust}"
+    );
+    assert!(
+        rust.contains("ui.open_popup(::tole::Element::id(&e3));"),
+        "{rust}"
+    );
+    assert!(rust.contains("ui.close_popup(::tole::Element::id(&e3));"));
+    assert!(
+        rust.contains("::tole::ModelSource::model(ui.get(e4.props.files))"),
+        "{rust}"
+    );
+    assert!(rust.contains(".is_dir"));
+    assert_eq!(
+        refused("component P : Item { SplitView { orientation: o }\n property int o }"),
+        "1:47: a SplitView's `orientation` is `Qt.Horizontal` or `Qt.Vertical`, and stays"
+    );
+}

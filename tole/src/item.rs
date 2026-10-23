@@ -126,6 +126,47 @@ pub struct TextInputProps {
     pub multiline: bool,
 }
 
+/// A `Popup`'s own properties.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PopupProps {
+    /// `crate::close_policy`'s flags: what closes it.
+    pub close_policy: Prop<i32>,
+    /// Whether it takes every press while open, and dims the window
+    /// behind it.
+    pub modal: Prop<bool>,
+    /// What a modal one lays over the window behind it.
+    pub dim_color: Prop<Color>,
+}
+
+/// A `SplitView`'s own properties.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SplitProps {
+    /// It places its children as a `RowLayout` (`ColumnLayout` when
+    /// vertical) does, `spacing` apart: the handles' width.
+    pub flow: FlowProps,
+    /// The line drawn in each handle.
+    pub handle_color: Prop<Color>,
+    /// Whether its children go down rather than across.
+    pub vertical: bool,
+}
+
+/// A `FolderListModel`'s own properties: a folder's entries as a model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FolderProps {
+    /// The folder; `~` at its start is the home folder.
+    pub folder: Prop<Rc<str>>,
+    /// Whether names starting with `.` are listed.
+    pub show_hidden: Prop<bool>,
+    /// Whether files are listed, or folders only.
+    pub show_files: Prop<bool>,
+    /// The entries, folders first, each sorted by name (read only).
+    pub files: Prop<crate::model::ModelRc<crate::folder::FileEntry>>,
+    /// The folder above, `""` at the top (read only).
+    pub parent_folder: Prop<Rc<str>>,
+    /// The folder, `~` worked out (read only).
+    pub path: Prop<Rc<str>>,
+}
+
 /// A `Row`'s or `Column`'s own properties.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PositionerProps {
@@ -248,6 +289,14 @@ pub enum Kind {
     ListView(ListViewProps),
     /// A `TextInput` or `TextEdit`: text typed into.
     TextInput(TextInputProps),
+    /// A `Popup`: drawn over everything and given the pointer first while
+    /// shown, outside any cut around it.
+    Popup(PopupProps),
+    /// A `SplitView`: its children side by side (or one under another),
+    /// the boundaries between them dragged.
+    SplitView(SplitProps),
+    /// A `FolderListModel`: draws nothing, lists a folder.
+    FolderListModel(FolderProps),
 }
 
 /// A `MouseArea`'s own properties and signals.
@@ -322,6 +371,14 @@ pub enum KindName {
     TextInput,
     /// [`Kind::TextInput`], lines.
     TextEdit,
+    /// [`Kind::Popup`].
+    Popup,
+    /// [`Kind::SplitView`], across.
+    SplitView,
+    /// [`Kind::SplitView`], down.
+    SplitViewVertical,
+    /// [`Kind::FolderListModel`].
+    FolderListModel,
 }
 
 /// One item.
@@ -475,6 +532,24 @@ impl Ui {
                 });
                 Kind::Text(props)
             }
+            KindName::Popup => {
+                common.visible.set(self, false);
+                Kind::Popup(PopupProps {
+                    close_policy: self.prop(crate::popup::close_policy::DEFAULT),
+                    modal: self.prop(false),
+                    dim_color: self.prop(Color::rgba(0, 0, 0, 72)),
+                })
+            }
+            KindName::SplitView | KindName::SplitViewVertical => Kind::SplitView(SplitProps {
+                flow: FlowProps {
+                    spacing: self.prop(1.0_f32),
+                    solve: self.prop(crate::layouts::Solved::default()),
+                    cross: self.prop(crate::layouts::Solved::default()),
+                },
+                handle_color: self.prop(Color::rgba(0, 0, 0, 40)),
+                vertical: kind == KindName::SplitViewVertical,
+            }),
+            KindName::FolderListModel => Kind::FolderListModel(self.folder_props()),
             KindName::TextInput | KindName::TextEdit => {
                 let text = self.prop(Rc::<str>::from(""));
                 let cursor_position = self.prop(0_i32);
@@ -981,6 +1056,21 @@ fn props_of(data: &ItemData) -> Vec<crate::ui::PropId> {
                 p.cache_buffer.id,
             ]);
         }
+        Kind::Popup(p) => ids.extend([p.close_policy.id, p.modal.id, p.dim_color.id]),
+        Kind::SplitView(p) => ids.extend([
+            p.flow.spacing.id,
+            p.flow.solve.id,
+            p.flow.cross.id,
+            p.handle_color.id,
+        ]),
+        Kind::FolderListModel(p) => ids.extend([
+            p.folder.id,
+            p.show_hidden.id,
+            p.show_files.id,
+            p.files.id,
+            p.parent_folder.id,
+            p.path.id,
+        ]),
         Kind::TextInput(p) => ids.extend([
             p.text.id,
             p.color.id,

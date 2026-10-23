@@ -109,6 +109,16 @@ impl Ui {
         for root in self.roots.clone() {
             self.flicks_in(root, (0.0, 0.0), None, (x, y), &mut found);
         }
+        // A shown popup is over everything, and under the pointer first.
+        for (popup, origin) in self.popups_shown() {
+            let inside = self.rect_of(popup).is_some_and(|r| r.contains(x, y));
+            if inside {
+                found.clear();
+            }
+            self.input.overlay = Some(popup);
+            self.flicks_in(popup, origin, None, (x, y), &mut found);
+        }
+        self.input.overlay = None;
         for flick in found.into_iter().rev() {
             let (Some(props), Some(own), Some(content)) = (
                 self.flickable(flick),
@@ -156,6 +166,9 @@ impl Ui {
             return;
         };
         if !self.get(common.visible) || !self.get(common.enabled) {
+            return;
+        }
+        if self.popup(item).is_some() && self.input.overlay != Some(item) {
             return;
         }
         let rect = Rect::new(
