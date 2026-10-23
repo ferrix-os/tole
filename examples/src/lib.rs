@@ -58,7 +58,7 @@ pub fn find_text(ui: &mut Ui, label: &str) -> Option<tole::ItemId> {
 }
 
 /// Every demo, in the README's order.
-pub const DEMOS: [Demo; 5] = [
+pub const DEMOS: [Demo; 6] = [
     Demo {
         name: "hello",
         about: "the smallest program",
@@ -97,7 +97,113 @@ pub const DEMOS: [Demo; 5] = [
         about: "RowLayout, ColumnLayout, GridLayout, Flow, Grid and Repeater",
         make: |ui| Form::new(ui, None).map(|root| root.common()),
     },
+    Demo {
+        name: "journal",
+        about: "a ListView of 100,000 rows, scrolled to row 50,000",
+        make: |ui| {
+            let journal = Journal::new(ui, None)?;
+            journal
+                .entries
+                .set(ui, tole::ModelRc::new(JournalRows::default()));
+            let list = find_kind(ui, |kind| matches!(kind, tole::Kind::ListView(_)))?;
+            ui.position_view_at_index(list, 50_000);
+            Some(journal.common())
+        },
+    },
 ];
+
+/// The journal demo's rows: 100,000 of them, each made when asked for
+/// and never kept.
+#[derive(Debug, Default)]
+pub struct JournalRows {
+    /// Says nothing ever changes.
+    tracker: tole::ModelTracker,
+}
+
+/// A row of the journal: a heading every 40 rows, records between.
+const JOURNAL_ROWS: usize = 100_000;
+
+impl tole::Model for JournalRows {
+    type Row = Entry;
+
+    fn row_count(&self) -> usize {
+        JOURNAL_ROWS
+    }
+
+    fn row(&self, index: usize) -> Option<Entry> {
+        if index >= JOURNAL_ROWS {
+            return None;
+        }
+        let seconds = 8 * 3600 + index * 3;
+        let time = format!(
+            "{:02}:{:02}:{:02}",
+            seconds / 3600 % 24,
+            seconds / 60 % 60,
+            seconds % 60
+        );
+        if index.is_multiple_of(40) {
+            return Some(Entry {
+                kind: EntryKind::Header,
+                text: format!("Boot {} · {time}", index / 40 + 1).into(),
+                ..Entry::default()
+            });
+        }
+        const SOURCES: [&str; 6] = ["kernel", "hyprix", "netd", "lode", "authd", "sshd"];
+        const TEXTS: [&str; 6] = [
+            "link up at 1 Gbit/s, full duplex",
+            "output HDMI-A-1: 2560x1440 at 120 Hz",
+            "lease renewed for 192.168.9.193",
+            "forwarding 1,204 records over TLS",
+            "session opened for sebastian",
+            "accepted publickey from 192.168.9.20 port 51022",
+        ];
+        let hash = index.wrapping_mul(2_654_435_761) >> 7;
+        let level = match hash % 23 {
+            0 => 3,
+            1 | 2 => 4,
+            _ => 6,
+        };
+        Some(Entry {
+            kind: EntryKind::Record,
+            level,
+            time: time.into(),
+            source: SOURCES
+                .get(hash % SOURCES.len())
+                .copied()
+                .unwrap_or_default()
+                .into(),
+            text: format!(
+                "{} (#{})",
+                TEXTS
+                    .get((hash / 7) % TEXTS.len())
+                    .copied()
+                    .unwrap_or_default(),
+                tole::group(index as i32)
+            )
+            .into(),
+        })
+    }
+
+    fn row_height(&self, index: usize) -> Option<f32> {
+        Some(if index.is_multiple_of(40) { 34.0 } else { 24.0 })
+    }
+
+    fn tracker(&self) -> &tole::ModelTracker {
+        &self.tracker
+    }
+}
+
+/// The first item, anywhere, whose kind `matches` says.
+pub fn find_kind(ui: &Ui, matches: impl Fn(&tole::Kind) -> bool) -> Option<tole::ItemId> {
+    let mut stack: Vec<tole::ItemId> = ui.roots().to_vec();
+    while let Some(item) = stack.pop() {
+        if ui.kind(item).is_some_and(|kind| matches(&kind)) {
+            return Some(item);
+        }
+        stack.extend(ui.children(item).iter().rev());
+    }
+    None
+}
 
 /// The fonts the demos draw with: `TOLE_FONTS` when set, else the Ferrix
 /// tree's Inter beside this checkout, so a screenshot does not depend on
@@ -243,6 +349,26 @@ mod tests {
         assert!(on(&mut ui));
         key(&mut ui, "space");
         assert!(!on(&mut ui));
+    }
+
+    #[test]
+    fn the_journal_makes_a_screenful_of_its_hundred_thousand_rows() {
+        let mut ui = tole::Ui::new(super::fonts());
+        let root = (DEMOS[5].make)(&mut ui).expect("made");
+        let _ = ui.render((600, 420), tole::Color::TRANSPARENT);
+        let list = super::find_kind(&ui, |k| matches!(k, tole::Kind::ListView(_))).expect("a list");
+        let (held, made) = ui.view_delegates(list).expect("a view");
+        assert!(held < 30 && made < 30, "{held} held, {made} made");
+        assert!(super::find_text(&mut ui, "100,000 entries").is_some());
+        // Scrolled through a thousand rows by the wheel, it makes no more
+        // than it holds.
+        ui.pointer_move(300.0, 200.0);
+        for _ in 0..1000 {
+            ui.pointer_wheel(8.0);
+        }
+        let (_, after) = ui.view_delegates(list).expect("a view");
+        assert!(after < 40, "{after} made");
+        let _ = root;
     }
 
     #[test]

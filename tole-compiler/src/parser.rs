@@ -485,6 +485,15 @@ impl Parser<'_> {
             }
         }
         self.expect(":")?;
+        // `delegate: Row { ... }`: an element as a property's value.
+        if let [name] = path.as_slice()
+            && name.text == "delegate"
+            && matches!(self.peek(), Tok::Ident(text) if text.chars().next().is_some_and(char::is_uppercase))
+            && matches!(self.peek2(), Tok::Punct("{"))
+        {
+            let kind = self.ident()?;
+            return Ok(vec![Member::Child(self.element_body(kind)?)]);
+        }
         Ok(vec![Member::Binding {
             path,
             expr: self.expr()?,

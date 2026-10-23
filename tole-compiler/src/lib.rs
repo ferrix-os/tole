@@ -17,7 +17,8 @@
 //! signals and handlers (U3a); focus, `Keys.on...` handlers with their
 //! `event`, `KeyNavigation` and `forceActiveFocus()` (U3c); `list<T>` and
 //! `model<T>`, list literals and indexing, `Layout.*`, and `Repeater`
-//! delegates with `modelData` and `index` (U4a).
+//! delegates with `modelData` and `index` (U4a); `Flickable`,
+//! `ListView`, `delegate:`, `DelegateChooser` and `group()` (U4b).
 
 mod emit;
 mod lexer;

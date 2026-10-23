@@ -33,6 +33,10 @@ impl Ui {
         if self.place_together(parent) {
             return;
         }
+        if let Some(flick) = self.flick_of_content(parent) {
+            self.bind_content_height(flick);
+            return;
+        }
         let (props, axis) = match self.kind(parent) {
             Some(Kind::Row(props)) => (props, Axis::Across),
             Some(Kind::Column(props)) => (props, Axis::Down),
@@ -197,7 +201,10 @@ impl Ui {
             let Some((target, line)) = target else {
                 return Ok(None);
             };
-            let is_parent = Some(target) == parent;
+            // A Flickable's children are on its content item: naming the
+            // Flickable names their parent.
+            let is_parent =
+                Some(target) == parent || (parent.is_some() && self.content_item(target) == parent);
             let sibling = !is_parent && self.parent(target) == parent && target != item;
             let common = self.common(target).ok_or(())?;
             if is_parent || sibling {

@@ -382,3 +382,59 @@ fn bad_layouts_and_repeaters_are_refused() {
         "1:39: a int cannot be indexed"
     );
 }
+
+#[test]
+fn list_views_choose_their_delegates() {
+    let rust = accepted(
+        "enum K { A, B }
+        struct R { kind: K; text: string }
+        component V : Item {
+            property model<R> rows
+            Flickable { id: f; contentHeight: 900; Item { height: f.contentY } }
+            ListView {
+                id: list
+                model: rows
+                delegate: DelegateChooser {
+                    role: \"kind\"
+                    DelegateChoice { roleValue: K.B; Text { text: modelData.text; width: parent.width } }
+                    DelegateChoice { Item { height: index } }
+                }
+            }
+            ListView { model: 10; Item { height: list.count } }
+        }",
+    );
+    for want in [
+        "::tole::Prop::set(e1.props.content_height, ui, ((900_i32) as f32));",
+        "ui.get(e1.props.content_y)",
+        "let factories: ::std::vec::Vec<::tole::DelegateFactory> = ::std::vec![",
+        "let role = row.kind;",
+        "if role == K::B { return 0; } 1 });",
+        "ui.set_view_delegates(::tole::Element::id(&e3), factories, ::core::option::Option::Some(chooser));",
+        "ui.get(e3.common.width)",
+        "ui.set_view_delegates(::tole::Element::id(&e4), ::std::vec![",
+        "::core::option::Option::None);",
+        "ui.get(e3.props.count)",
+    ] {
+        assert!(rust.contains(want), "{want}\n{rust}");
+    }
+}
+
+#[test]
+fn bad_choosers_are_refused() {
+    assert_eq!(
+        refused(
+            "struct R { kind: int }\ncomponent V : Item { property model<R> rows\n ListView { model: rows; delegate: DelegateChooser { role: \"sort\" } } }"
+        ),
+        "3:60: the rows, a R, have no field `sort`"
+    );
+    assert_eq!(
+        refused(
+            "component V : Item { property int k\n ListView { model: 3; DelegateChooser { DelegateChoice { roleValue: k; Item {} } } } }"
+        ),
+        "2:69: a `roleValue` is a constant"
+    );
+    assert_eq!(
+        refused("component V : Item { Repeater { model: 3; DelegateChooser { } } }"),
+        "1:43: a `DelegateChooser` chooses a `ListView`'s delegates; a `Repeater` has one"
+    );
+}

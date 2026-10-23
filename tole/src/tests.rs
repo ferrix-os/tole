@@ -1169,3 +1169,154 @@ fn a_repeater_makes_a_delegate_per_row_beside_itself() {
     assert_eq!(ui.children(row.id), [first.id, last.id]);
     assert_eq!(ui.get(last.common.x), 7.0);
 }
+
+/// A factory of rectangles `height` high whose `implicitWidth` is their
+/// row's value, an `int`.
+fn row_factory(height: f32) -> crate::DelegateFactory {
+    Rc::new(move |ui: &mut Ui, parent| {
+        let r = crate::handles::Rectangle::new(ui, Some(parent))?;
+        let (row, index) = ui.delegate_cells(r.id);
+        r.common.height.set(ui, height);
+        let value: crate::Prop<i32> = crate::Prop::from_id(row);
+        r.common
+            .implicit_width
+            .bind(ui, move |ui| ui.get(value) as f32);
+        Some(crate::Delegate {
+            root: r.id,
+            row,
+            index,
+        })
+    })
+}
+
+/// The rows `view` shows, by each shown delegate's value, top to bottom.
+fn shown_rows(ui: &mut Ui, view: crate::ItemId) -> Vec<(i32, f32)> {
+    let content = ui.content_item(view).unwrap();
+    let mut out = Vec::new();
+    for child in ui.children(content).to_vec() {
+        let c = ui.common(child).unwrap();
+        if ui.get(c.visible) {
+            out.push((ui.get(c.implicit_width) as i32, ui.get(c.y)));
+        }
+    }
+    out.sort_by(|a, b| a.1.total_cmp(&b.1));
+    out
+}
+
+#[test]
+fn a_list_view_of_a_million_rows_makes_a_screenful() {
+    let mut ui = bare();
+    let view = crate::handles::ListView::new(&mut ui, None).unwrap();
+    view.common.width.set(&mut ui, 200.0);
+    view.common.height.set(&mut ui, 100.0);
+    ui.set_view_delegates(view.id, vec![row_factory(20.0)], None);
+    view.props
+        .model
+        .set(&mut ui, crate::ModelSource::count(1_000_000));
+    ui.update();
+    assert_eq!(ui.get(view.props.count), 1_000_000);
+    assert_eq!(ui.get(view.props.flick.content_height), 20_000_000.0);
+    assert_eq!(
+        shown_rows(&mut ui, view.id),
+        [(0, 0.0), (1, 20.0), (2, 40.0), (3, 60.0), (4, 80.0)]
+    );
+    // Scrolled half way: the same five delegates, given other rows.
+    view.props.flick.content_y.set(&mut ui, 10_000_010.0);
+    ui.update();
+    let rows: Vec<i32> = shown_rows(&mut ui, view.id).iter().map(|r| r.0).collect();
+    assert_eq!(rows, [500_000, 500_001, 500_002, 500_003, 500_004, 500_005]);
+    for _ in 0..50 {
+        let y = ui.get(view.props.flick.content_y);
+        view.props.flick.content_y.set(&mut ui, y + 7.0);
+        ui.update();
+    }
+    let (held, made) = ui.view_delegates(view.id).unwrap();
+    assert!(held <= 7 && made <= 7, "{held} held, {made} made");
+    // The wheel scrolls it, and stops at the end.
+    ui.position_view_at_end(view.id);
+    assert_eq!(ui.get(view.props.flick.content_y), 20_000_000.0 - 100.0);
+    assert_eq!(shown_rows(&mut ui, view.id).last().unwrap().0, 999_999);
+    ui.pointer_move(50.0, 50.0);
+    ui.pointer_wheel(10.0);
+    assert_eq!(ui.get(view.props.flick.content_y), 20_000_000.0 - 100.0);
+    ui.pointer_wheel(-10.0);
+    assert_eq!(ui.get(view.props.flick.content_y), 20_000_000.0 - 130.0);
+}
+
+#[test]
+fn a_list_view_chooses_delegates_and_follows_its_model() {
+    let mut ui = bare();
+    let view = crate::handles::ListView::new(&mut ui, None).unwrap();
+    view.common.height.set(&mut ui, 100.0);
+    view.props.spacing.set(&mut ui, 2.0);
+    // Even values are 20 high, odd ones 40.
+    let chooser: crate::Chooser = Rc::new(|value: &crate::Value| match value {
+        crate::Value::Int(n) => (*n % 2) as usize,
+        _ => 0,
+    });
+    ui.set_view_delegates(
+        view.id,
+        vec![row_factory(20.0), row_factory(40.0)],
+        Some(chooser),
+    );
+    let model = Rc::new(crate::VecModel::new(vec![0_i32, 1, 2, 3, 4, 5]));
+    let shared: Rc<dyn crate::Model<Row = i32>> = model.clone();
+    view.props.model.set(
+        &mut ui,
+        crate::ModelSource::model(crate::ModelRc::from_rc(shared)),
+    );
+    ui.update();
+    assert_eq!(
+        shown_rows(&mut ui, view.id),
+        [(0, 0.0), (1, 22.0), (2, 64.0), (3, 86.0)]
+    );
+    // A row that changes kind gets a delegate of its kind.
+    model.set_row(0, 7);
+    ui.update();
+    assert_eq!(shown_rows(&mut ui, view.id)[..2], [(7, 0.0), (1, 42.0)]);
+    // Rows added at the end extend it; a reset starts again.
+    model.push(8);
+    ui.update();
+    assert_eq!(ui.get(view.props.count), 7);
+    model.set_vec(vec![2, 4]);
+    ui.update();
+    assert_eq!(shown_rows(&mut ui, view.id), [(2, 0.0), (4, 22.0)]);
+    assert_eq!(ui.get(view.props.flick.content_height), 42.0);
+}
+
+#[test]
+fn a_flickable_scrolls_its_content_by_the_wheel() {
+    let mut ui = bare();
+    let root = crate::handles::Item::new(&mut ui, None).unwrap();
+    root.common.width.set(&mut ui, 100.0);
+    root.common.height.set(&mut ui, 100.0);
+    let flick = crate::handles::Flickable::new(&mut ui, Some(root.id)).unwrap();
+    flick.common.width.set(&mut ui, 100.0);
+    flick.common.height.set(&mut ui, 50.0);
+    flick.common.clip.set(&mut ui, true);
+    let tall = sized(&mut ui, flick.id, 100.0, 80.0);
+    let content = ui.content_item(flick.id).unwrap();
+    assert_eq!(
+        ui.parent(tall.id),
+        Some(content),
+        "children go on the content"
+    );
+    let area = area(&mut ui, tall.id, (0.0, 60.0, 100.0, 20.0));
+    // The content is as tall as its lowest child.
+    let c = ui.common(content).unwrap();
+    assert_eq!(ui.get(c.height), 80.0);
+    ui.pointer_move(10.0, 10.0);
+    ui.pointer_wheel(4.0);
+    assert_eq!(ui.get(flick.props.content_y), 12.0);
+    ui.pointer_wheel(100.0);
+    assert_eq!(
+        ui.get(flick.props.content_y),
+        30.0,
+        "no further than its end"
+    );
+    // The area at 60 in the content is now at 30 in the window.
+    ui.pointer_move(10.0, 35.0);
+    ui.pointer_press();
+    ui.pointer_release();
+    assert!(emitted(&mut ui).contains(&area.props.clicked));
+}

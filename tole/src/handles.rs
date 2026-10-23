@@ -5,8 +5,8 @@
 //! value.
 
 use crate::item::{
-    Common, FlowProps, GridProps, ItemId, KindName, MouseAreaProps, PositionerProps,
-    RectangleProps, RepeaterProps, TextProps,
+    Common, FlickProps, FlowProps, GridProps, ItemId, KindName, ListViewProps, MouseAreaProps,
+    PositionerProps, RectangleProps, RepeaterProps, TextProps,
 };
 use crate::ui::Ui;
 
@@ -95,6 +95,15 @@ handle!(
 handle!(
     /// A `Repeater`.
     Repeater, Repeater, RepeaterProps, repeater
+);
+
+handle!(
+    /// A `Flickable`.
+    Flickable, Flickable, FlickProps, flickable
+);
+handle!(
+    /// A `ListView`.
+    ListView, ListView, ListViewProps, list_view
 );
 
 /// A handle with no properties of its kind's own.

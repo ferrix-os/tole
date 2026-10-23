@@ -156,6 +156,10 @@ pub(crate) enum Kind {
     GridLayout,
     /// `Repeater`.
     Repeater,
+    /// `Flickable`.
+    Flickable,
+    /// `ListView`.
+    ListView,
 }
 
 impl Kind {
@@ -175,6 +179,8 @@ impl Kind {
             "ColumnLayout" => Kind::ColumnLayout,
             "GridLayout" => Kind::GridLayout,
             "Repeater" => Kind::Repeater,
+            "Flickable" => Kind::Flickable,
+            "ListView" => Kind::ListView,
             _ => return None,
         })
     }
@@ -195,6 +201,8 @@ impl Kind {
             Kind::ColumnLayout => "::tole::handles::ColumnLayout",
             Kind::GridLayout => "::tole::handles::GridLayout",
             Kind::Repeater => "::tole::handles::Repeater",
+            Kind::Flickable => "::tole::handles::Flickable",
+            Kind::ListView => "::tole::handles::ListView",
         }
     }
 
@@ -247,6 +255,21 @@ impl Kind {
             (Kind::Grid | Kind::GridLayout, ["columnSpacing"]) => {
                 Some((".props.column_spacing", Ty::Real))
             }
+            (Kind::Flickable, ["contentX"]) => Some((".props.content_x", Ty::Real)),
+            (Kind::Flickable, ["contentY"]) => Some((".props.content_y", Ty::Real)),
+            (Kind::Flickable, ["contentWidth"]) => Some((".props.content_width", Ty::Real)),
+            (Kind::Flickable, ["contentHeight"]) => Some((".props.content_height", Ty::Real)),
+            (Kind::Flickable, ["interactive"]) => Some((".props.interactive", Ty::Bool)),
+            (Kind::ListView, ["contentX"]) => Some((".props.flick.content_x", Ty::Real)),
+            (Kind::ListView, ["contentY"]) => Some((".props.flick.content_y", Ty::Real)),
+            (Kind::ListView, ["contentWidth"]) => Some((".props.flick.content_width", Ty::Real)),
+            (Kind::ListView, ["contentHeight"]) => Some((".props.flick.content_height", Ty::Real)),
+            (Kind::ListView, ["interactive"]) => Some((".props.flick.interactive", Ty::Bool)),
+            (Kind::ListView, ["model"]) => Some((".props.model", Ty::ModelSource)),
+            (Kind::ListView, ["spacing"]) => Some((".props.spacing", Ty::Real)),
+            (Kind::ListView, ["count"]) => Some((".props.count", Ty::Int)),
+            (Kind::ListView, ["currentIndex"]) => Some((".props.current_index", Ty::Int)),
+            (Kind::ListView, ["cacheBuffer"]) => Some((".props.cache_buffer", Ty::Real)),
             (Kind::Repeater, ["model"]) => Some((".props.model", Ty::ModelSource)),
             (Kind::Repeater, ["count"]) => Some((".props.count", Ty::Int)),
             (Kind::MouseArea, ["hoverEnabled"]) => Some((".props.hover_enabled", Ty::Bool)),

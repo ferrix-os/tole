@@ -239,3 +239,21 @@ prop_type!(Font, Font, Font::default());
 prop_type!(Elide, Elide, Elide::None);
 prop_type!(HAlign, HAlign, HAlign::Left);
 prop_type!(VAlign, VAlign, VAlign::Center);
+
+/// `n` with its digits grouped in threes, as the markup's `group(n)`:
+/// `1234567` is `"1,234,567"`.
+#[must_use]
+pub fn group(n: i32) -> Rc<str> {
+    let digits = n.unsigned_abs().to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3 + 1);
+    if n < 0 {
+        out.push('-');
+    }
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    Rc::from(out)
+}

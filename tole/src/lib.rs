@@ -16,6 +16,7 @@
 
 mod cpu;
 mod damage;
+mod flick;
 mod focus;
 pub mod handles;
 mod input;
@@ -30,6 +31,7 @@ mod signal;
 mod text;
 mod ui;
 mod value;
+mod view;
 #[cfg(feature = "wayland")]
 pub mod window;
 
@@ -37,8 +39,8 @@ pub use cpu::CpuRenderer;
 pub use focus::{KeyEvent, Nav};
 pub use handles::Element;
 pub use item::{
-    Common, FlowProps, GridProps, ItemId, Kind, KindName, MouseAreaProps, PositionerProps,
-    RectangleProps, RepeaterProps, TextProps,
+    Common, FlickProps, FlowProps, GridProps, ItemId, Kind, KindName, ListViewProps,
+    MouseAreaProps, PositionerProps, RectangleProps, RepeaterProps, TextProps,
 };
 pub use layout::{Anchors, Line};
 pub use layouts::{LayoutProps, Solved, align};
@@ -47,7 +49,8 @@ pub use render::{DrawOp, Rect, Renderer, play};
 pub use repeater::{Delegate, DelegateFactory};
 pub use signal::{Emitted, Handler, SignalId};
 pub use ui::{Effect, Prop, PropId, Ui};
-pub use value::{Color, CustomValue, Elide, Font, HAlign, PropType, VAlign, Value};
+pub use value::{Color, CustomValue, Elide, Font, HAlign, PropType, VAlign, Value, group};
+pub use view::Chooser;
 
 /// The Rust the compiler generated from the program's `.tole` files
 /// (`tole_compiler::build` in its `build.rs`), as a module of its own whose

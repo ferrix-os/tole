@@ -136,6 +136,39 @@ pub struct RepeaterProps {
     pub count: Prop<i32>,
 }
 
+/// A `Flickable`'s own properties: what a `ListView` has too.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FlickProps {
+    /// How far its content is scrolled across.
+    pub content_x: Prop<f32>,
+    /// How far down.
+    pub content_y: Prop<f32>,
+    /// Its content's width; below 0 for its own width.
+    pub content_width: Prop<f32>,
+    /// Its content's height; below 0 for the bottom of its content's
+    /// lowest child. A `ListView` sets it from its rows.
+    pub content_height: Prop<f32>,
+    /// Whether the wheel scrolls it.
+    pub interactive: Prop<bool>,
+}
+
+/// A `ListView`'s own properties.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ListViewProps {
+    /// It scrolls as a `Flickable`.
+    pub flick: FlickProps,
+    /// What it makes a delegate for each row of.
+    pub model: Prop<crate::model::ModelSource>,
+    /// Between two rows.
+    pub spacing: Prop<f32>,
+    /// How many rows its model has.
+    pub count: Prop<i32>,
+    /// The row a program or the keys made current; -1 for none.
+    pub current_index: Prop<i32>,
+    /// How far past its edges delegates are kept made, in logical pixels.
+    pub cache_buffer: Prop<f32>,
+}
+
 /// What an item is, with its own properties.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -168,6 +201,11 @@ pub enum Kind {
     /// A `Repeater`: a delegate for each row of its model, made beside
     /// it in its parent.
     Repeater(RepeaterProps),
+    /// A `Flickable`: its children on a content item it scrolls.
+    Flickable(FlickProps),
+    /// A `ListView`: a `Flickable` making delegates only for the rows in
+    /// view.
+    ListView(ListViewProps),
 }
 
 /// A `MouseArea`'s own properties and signals.
@@ -228,6 +266,10 @@ pub enum KindName {
     GridLayout,
     /// [`Kind::Repeater`].
     Repeater,
+    /// [`Kind::Flickable`].
+    Flickable,
+    /// [`Kind::ListView`].
+    ListView,
 }
 
 /// One item.
@@ -250,6 +292,11 @@ pub(crate) struct ItemData {
     pub(crate) keys: Option<Box<crate::focus::KeysAttached>>,
     /// Its `Layout.*`, once the markup gave any.
     pub(crate) layout: Option<crate::layouts::LayoutProps>,
+    /// A `Flickable`'s or `ListView`'s content item: where its children
+    /// go.
+    pub(crate) content: Option<ItemId>,
+    /// A `ListView`'s rows and delegates.
+    pub(crate) view: Option<Rc<std::cell::RefCell<crate::view::ViewState>>>,
 }
 
 /// What an item holds for a component.
@@ -282,6 +329,8 @@ impl Ui {
         {
             return None;
         }
+        // A Flickable's children go on its content item.
+        let parent = parent.map(|p| self.item(p).and_then(|data| data.content).unwrap_or(p));
         let common = Common {
             x: self.prop(0.0_f32),
             y: self.prop(0.0_f32),
@@ -331,6 +380,15 @@ impl Ui {
                     _ => Kind::ColumnLayout(props),
                 }
             }
+            KindName::Flickable => Kind::Flickable(self.flick_props()),
+            KindName::ListView => Kind::ListView(ListViewProps {
+                flick: self.flick_props(),
+                model: self.prop(crate::model::ModelSource::default()),
+                spacing: self.prop(0.0_f32),
+                count: self.prop(0_i32),
+                current_index: self.prop(-1_i32),
+                cache_buffer: self.prop(0.0_f32),
+            }),
             KindName::Repeater => Kind::Repeater(RepeaterProps {
                 model: self.prop(crate::model::ModelSource::default()),
                 count: self.prop(0_i32),
@@ -395,6 +453,8 @@ impl Ui {
             focus_child: None,
             keys: None,
             layout: None,
+            content: None,
+            view: None,
         };
         let id = self.place(data);
         match parent {
@@ -405,6 +465,9 @@ impl Ui {
                 self.position_children(parent);
             }
             None => self.roots.push(id),
+        }
+        if matches!(kind, Kind::Flickable(_) | Kind::ListView(_)) {
+            self.make_content(id);
         }
         Some(id)
     }
@@ -594,6 +657,31 @@ impl Ui {
         }
     }
 
+    /// A `Flickable`'s or `ListView`'s scrolling properties.
+    #[must_use]
+    pub fn flickable(&self, item: ItemId) -> Option<FlickProps> {
+        match self.kind(item)? {
+            Kind::Flickable(props) => Some(props),
+            Kind::ListView(props) => Some(props.flick),
+            _ => None,
+        }
+    }
+
+    /// A `ListView`'s own properties.
+    #[must_use]
+    pub fn list_view(&self, item: ItemId) -> Option<ListViewProps> {
+        match self.kind(item)? {
+            Kind::ListView(props) => Some(props),
+            _ => None,
+        }
+    }
+
+    /// A `Flickable`'s or `ListView`'s content item.
+    #[must_use]
+    pub fn content_item(&self, item: ItemId) -> Option<ItemId> {
+        self.item(item)?.content
+    }
+
     /// Make `item` go with `owner` when `owner` is destroyed.
     pub(crate) fn own_item(&mut self, owner: ItemId, item: ItemId) {
         if let Some(data) = self.item_mut(owner) {
@@ -764,6 +852,17 @@ fn props_of(data: &ItemData) -> Vec<crate::ui::PropId> {
             ids.extend([p.spacing.id, p.solve.id, p.cross.id]);
         }
         Kind::Repeater(p) => ids.extend([p.model.id, p.count.id]),
+        Kind::Flickable(f) => ids.extend(f.props()),
+        Kind::ListView(p) => {
+            ids.extend(p.flick.props());
+            ids.extend([
+                p.model.id,
+                p.spacing.id,
+                p.count.id,
+                p.current_index.id,
+                p.cache_buffer.id,
+            ]);
+        }
         Kind::MouseArea(p) => ids.extend([
             p.hover_enabled.id,
             p.pressed.id,

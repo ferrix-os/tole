@@ -371,6 +371,112 @@ component Form : Rectangle {
 
 ![form](docs/screenshots/form.png)
 
+### A list of 100,000 rows
+
+A `ListView` over a Rust model of 100,000 rows, two kinds of row chosen
+by a `DelegateChooser` on the rows' `kind`. Only the rows in view have
+delegates; scrolled out, a delegate goes to a pool of its kind and is
+given the next row that needs one, so a screenful of them serves the
+whole list (a test scrolls a thousand wheel steps and counts). Row
+heights live in a Fenwick tree, so finding the row at an offset and
+correcting a row measured differently both take `log n` steps. The
+model makes a row only when it is shown; this one computes them, and
+says its rows' heights so the view never guesses. The picture is
+scrolled to row 50,000 with `positionViewAtIndex`.
+
+```qml
+// A ListView of 100,000 rows from a Rust model, two kinds of row chosen
+// by a DelegateChooser. Only the rows in view have delegates, recycled
+// as it scrolls; the model makes a row only when it is shown.
+import Fx
+
+enum EntryKind { Record, Header }
+
+struct Entry {
+    kind: EntryKind
+    level: int
+    time: string
+    source: string
+    text: string
+}
+
+component Journal : Rectangle {
+    property model<Entry> entries
+    width: 600; height: 420
+    color: "#fafaf8"
+
+    Rectangle {
+        id: bar
+        width: parent.width; height: 46
+        color: "white"
+        Text { x: 18; anchors.verticalCenter: parent.verticalCenter; text: "Journal"; font: font("Inter", 17, 600); color: "#1a1a1a" }
+        Text {
+            anchors.right: parent.right; anchors.rightMargin: 18
+            anchors.verticalCenter: parent.verticalCenter
+            text: "${group(list.count)} entries"
+            font: font("Inter", 12, 400)
+            color: "#888888"
+        }
+        Rectangle { y: parent.height - 1; width: parent.width; height: 1; color: "#e6e6e2" }
+    }
+
+    ListView {
+        id: list
+        anchors.top: bar.bottom; anchors.bottom: parent.bottom
+        anchors.left: parent.left; anchors.right: parent.right
+        clip: true
+        model: entries
+        delegate: DelegateChooser {
+            role: "kind"
+            DelegateChoice {
+                roleValue: EntryKind.Header
+                Rectangle {
+                    width: parent.width; height: 34
+                    color: "#f0f0ec"
+                    Text { x: 18; anchors.verticalCenter: parent.verticalCenter; text: modelData.text; font: font("Inter", 12, 600); color: "#555555" }
+                }
+            }
+            DelegateChoice {
+                roleValue: EntryKind.Record
+                Rectangle {
+                    width: parent.width; height: 24
+                    color: modelData.level <= 3 ? "#fbe9e7" : modelData.level == 4 ? "#fdf4e0" : "transparent"
+                    Text { x: 18; anchors.verticalCenter: parent.verticalCenter; text: modelData.time; font: font("Inter", 12, 400); color: "#999999" }
+                    Text {
+                        x: 92; width: 96; anchors.verticalCenter: parent.verticalCenter
+                        text: modelData.source; elide: Text.ElideRight
+                        font: font("Inter", 12, 500)
+                        color: modelData.level <= 3 ? "#c62828" : "#2a62c9"
+                    }
+                    Text {
+                        x: 196; width: parent.width - 212; anchors.verticalCenter: parent.verticalCenter
+                        text: modelData.text; elide: Text.ElideRight
+                        font: font("Inter", 12, 400)
+                        color: "#1a1a1a"
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+The model, in the demo's Rust:
+
+```rust
+impl tole::Model for JournalRows {
+    type Row = Entry;                       // the markup's struct
+    fn row_count(&self) -> usize { 100_000 }
+    fn row(&self, index: usize) -> Option<Entry> { /* made on demand */ }
+    fn row_height(&self, index: usize) -> Option<f32> {
+        Some(if index.is_multiple_of(40) { 34.0 } else { 24.0 })
+    }
+    fn tracker(&self) -> &tole::ModelTracker { &self.tracker }
+}
+```
+
+![journal](docs/screenshots/journal.png)
+
 ### In a window
 
 Every demo also runs in a window on the Wayland desktop it is started
@@ -398,6 +504,8 @@ viewer ported onto tole.
   tracking, the item tree (`Item`, `Rectangle`, `Text`, `Row`, `Column`,
   `MouseArea`, `FocusScope`), `Grid`, `Flow`, `RowLayout`,
   `ColumnLayout`, `GridLayout` with `Layout.*`, `Repeater` and models,
+  `Flickable`, `ListView` with virtualization, recycling and
+  `DelegateChooser`,
   signals and handlers, the pointer's routing, focus, keys and the Tab
   order, damage and
   partial redraw into a kept `Frame`, the window (`wayland` feature),

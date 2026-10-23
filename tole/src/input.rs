@@ -88,6 +88,9 @@ impl Ui {
         let Some((x, y)) = self.input.at else {
             return;
         };
+        if self.wheel_flick((x, y), 0.0, dy) {
+            return;
+        }
         if let Some((_, area)) = self.areas_at(x, y).into_iter().last() {
             self.emit(area.wheel, vec![Value::Real(dy)]);
         }

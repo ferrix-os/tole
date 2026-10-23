@@ -506,7 +506,7 @@ impl Program {
             }
         }
         out.push((var.clone(), ty.clone(), element, parent));
-        if ty == ElemTy::Kind(Kind::Repeater) {
+        if matches!(ty, ElemTy::Kind(Kind::Repeater | Kind::ListView)) {
             // Its child is its delegate, made by a factory of its own.
             return Ok(());
         }
@@ -1078,22 +1078,27 @@ impl Program {
         if !anchors.is_empty() {
             out.push_str(&self.anchors(scope, var, &anchors)?);
         }
-        if *ty == ElemTy::Kind(Kind::Repeater) {
-            out.push_str(&self.delegate_factory(scope, var, element)?);
+        if matches!(ty, ElemTy::Kind(Kind::Repeater | Kind::ListView)) {
+            out.push_str(&self.delegate_factory(scope, var, ty, element)?);
         }
         Ok(out)
     }
 
-    /// A `Repeater`'s delegate, its one child, as a factory: a closure
-    /// making the child's tree under the parent it is given, with
-    /// `modelData` and `index` in its scope.
+    /// A `Repeater`'s or `ListView`'s delegate as factories: closures
+    /// making the delegate's tree under the parent they are given, with
+    /// `modelData` and `index` in its scope. A view's may be a
+    /// `DelegateChooser`, one factory per `DelegateChoice` and a chooser
+    /// picking by the row's `role`.
     fn delegate_factory(
         &self,
         scope: &Scope<'_>,
         var: &str,
+        ty: &ElemTy,
         element: &Element,
     ) -> Result<String, Diagnostic> {
         let file = scope.file;
+        let view = *ty == ElemTy::Kind(Kind::ListView);
+        let what = if view { "ListView" } else { "Repeater" };
         let children: Vec<&Element> = element
             .members
             .iter()
@@ -1109,7 +1114,7 @@ impl Program {
                 return Err(diag(
                     file,
                     second.kind.pos,
-                    "a `Repeater` has one delegate: put the rest inside it",
+                    &format!("a `{what}` has one delegate: put the rest inside it"),
                 ));
             }
         };
@@ -1133,6 +1138,171 @@ impl Program {
             },
             None => Ty::Int,
         };
+        // A view's delegates are its own children; a Repeater's, its
+        // parent's.
+        let parent_target = if view {
+            Some(Target::Static(var.to_owned(), ty.clone()))
+        } else {
+            scope.parent.clone()
+        };
+        let id = format!("::tole::Element::id(&{var})");
+        if delegate.kind.text != "DelegateChooser" {
+            let factory = self.one_factory(scope, delegate, &row_ty, parent_target)?;
+            return Ok(if view {
+                format!(
+                    "        ui.set_view_delegates({id}, ::std::vec![{factory}], ::core::option::Option::None);\n"
+                )
+            } else {
+                format!(
+                    "        {{ let factory: ::tole::DelegateFactory = {factory};\n        ui.set_delegate({id}, factory); }}\n"
+                )
+            });
+        }
+        if !view {
+            return Err(diag(
+                file,
+                delegate.kind.pos,
+                "a `DelegateChooser` chooses a `ListView`'s delegates; a `Repeater` has one",
+            ));
+        }
+        self.chooser(scope, &id, delegate, &row_ty, parent_target)
+    }
+
+    /// A `DelegateChooser`: its choices' factories, and the chooser.
+    fn chooser(
+        &self,
+        scope: &Scope<'_>,
+        id: &str,
+        chooser: &Element,
+        row_ty: &Ty,
+        parent_target: Option<Target>,
+    ) -> Result<String, Diagnostic> {
+        let file = scope.file;
+        let mut role: Option<(String, Ty)> = None;
+        let mut factories = Vec::new();
+        let mut tests = Vec::new();
+        let mut fallback: Option<usize> = None;
+        for member in &chooser.members {
+            match member {
+                Member::Binding { path, expr } if matches!(path.as_slice(), [one] if one.text == "role") =>
+                {
+                    let Expr::Str(parts, pos) = expr else {
+                        return Err(diag(
+                            file,
+                            expr.pos(),
+                            "`role` names a field of the rows: `role: \"kind\"`",
+                        ));
+                    };
+                    let name = match parts.as_slice() {
+                        [StrPart::Text(text)] => text.clone(),
+                        _ => String::new(),
+                    };
+                    let field = match row_ty {
+                        Ty::Struct(s) => self
+                            .structs
+                            .get(s)
+                            .and_then(|fields| fields.iter().find(|(f, _)| *f == name))
+                            .map(|(_, t)| t.clone()),
+                        _ => None,
+                    };
+                    let Some(field) = field else {
+                        return Err(diag(
+                            file,
+                            *pos,
+                            &format!("the rows, a {}, have no field `{name}`", row_ty.name()),
+                        ));
+                    };
+                    role = Some((snake(&name), field));
+                }
+                Member::Child(choice) if choice.kind.text == "DelegateChoice" => {
+                    let mut value = None;
+                    let mut inner = None;
+                    for m in &choice.members {
+                        match m {
+                            Member::Binding { path, expr } if matches!(path.as_slice(), [one] if one.text == "roleValue") =>
+                            {
+                                value = Some(expr);
+                            }
+                            Member::Child(element) => inner = Some(element),
+                            _ => {
+                                return Err(diag(
+                                    file,
+                                    choice.kind.pos,
+                                    "a `DelegateChoice` holds a `roleValue` and its delegate",
+                                ));
+                            }
+                        }
+                    }
+                    let Some(element) = inner else {
+                        return Err(diag(
+                            file,
+                            choice.kind.pos,
+                            "a `DelegateChoice` holds its delegate",
+                        ));
+                    };
+                    let index = factories.len();
+                    factories.push(self.one_factory(
+                        scope,
+                        element,
+                        row_ty,
+                        parent_target.clone(),
+                    )?);
+                    match value {
+                        None => {
+                            if fallback.is_none() {
+                                fallback = Some(index);
+                            }
+                        }
+                        Some(expr) => {
+                            let want = role.as_ref().map_or(row_ty, |(_, t)| t);
+                            let code = self.expr_want(scope, expr, Some(want))?;
+                            if code.reads {
+                                return Err(diag(file, expr.pos(), "a `roleValue` is a constant"));
+                            }
+                            let text = coerce(file, expr.pos(), code, want)?;
+                            tests.push(format!("if role == {text} {{ return {index}; }}"));
+                        }
+                    }
+                }
+                Member::Child(other) => {
+                    return Err(diag(
+                        file,
+                        other.kind.pos,
+                        "a `DelegateChooser` holds `DelegateChoice`s",
+                    ));
+                }
+                _ => {
+                    return Err(diag(
+                        file,
+                        chooser.kind.pos,
+                        "a `DelegateChooser` has a `role` and `DelegateChoice`s",
+                    ));
+                }
+            }
+        }
+        let role_read = match &role {
+            Some((field, _)) => format!("row.{field}"),
+            None => "row".to_owned(),
+        };
+        Ok(format!(
+            "        {{ let factories: ::std::vec::Vec<::tole::DelegateFactory> = ::std::vec![{}];\n        let chooser: ::tole::Chooser = ::std::rc::Rc::new(move |value: &::tole::Value| -> usize {{ let row: {ty} = <{ty} as ::tole::PropType>::from_value(value).unwrap_or_else(<{ty} as ::tole::PropType>::fallback); let role = {role_read}; let _ = &role; {} {} }});\n        ui.set_view_delegates({id}, factories, ::core::option::Option::Some(chooser)); }}\n",
+            factories.join(", "),
+            tests.join(" "),
+            fallback.unwrap_or(0),
+            ty = row_ty.rust(),
+        ))
+    }
+
+    /// One delegate's factory: a closure making `delegate`'s tree.
+    fn one_factory(
+        &self,
+        scope: &Scope<'_>,
+        delegate: &Element,
+        row_ty: &Ty,
+        parent_target: Option<Target>,
+    ) -> Result<String, Diagnostic> {
+        let file = scope.file;
+        let row_ty = row_ty.clone();
         let depth = scope.depth + 1;
         let root_ty = match Kind::named(&delegate.kind.text) {
             Some(kind) => ElemTy::Kind(kind),
@@ -1158,14 +1328,14 @@ impl Program {
             delegate,
             root.clone(),
             root_ty.clone(),
-            scope.parent.clone(),
+            parent_target,
             &mut elements,
             &mut ids,
         )?;
         let mut out = String::new();
         let _ = writeln!(
             out,
-            "        {{ let factory: ::tole::DelegateFactory = ::std::rc::Rc::new(move |ui: &mut ::tole::Ui, parent: ::tole::ItemId| -> ::core::option::Option<::tole::Delegate> {{"
+            "::std::rc::Rc::new(move |ui: &mut ::tole::Ui, parent: ::tole::ItemId| -> ::core::option::Option<::tole::Delegate> {{"
         );
         for (index, (evar, ety, _, parent)) in elements.iter().enumerate() {
             let parent_id = match (index, parent) {
@@ -1244,7 +1414,7 @@ impl Program {
         }
         let _ = writeln!(
             out,
-            "        ::core::option::Option::Some(::tole::Delegate {{ root: ::tole::Element::id(&{root}), row: row_{depth}, index: index_{depth} }})\n        }});\n        ui.set_delegate(::tole::Element::id(&{var}), factory); }}"
+            "        ::core::option::Option::Some(::tole::Delegate {{ root: ::tole::Element::id(&{root}), row: row_{depth}, index: index_{depth} }})\n        }})"
         );
         Ok(out)
     }
@@ -1876,6 +2046,18 @@ impl Program {
                         real(px)?
                     ),
                     ty: Ty::Font,
+                    reads,
+                }
+            }
+            ["group"] => {
+                arity(1)?;
+                let v = codes
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| diag(file, pos, "one argument"))?;
+                Code {
+                    text: format!("::tole::group({})", text_of(v, &Ty::Int)?),
+                    ty: Ty::Str,
                     reads,
                 }
             }
