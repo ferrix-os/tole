@@ -1,4 +1,5 @@
-//! A window: a tree shown in a Wayland toplevel through
+//! A window: a tree shown in a Wayland toplevel, or a layer-shell
+//! surface (a bar, a dock, a panel at a screen's edge), through
 //! `compositor-toolkit` (`docs/UI-FRAMEWORK.md` §4.10), on Ferrix under
 //! hyprix and on any Wayland desktop -- the toolkit is pure Rust over the
 //! socket.
@@ -17,6 +18,7 @@
 
 use std::time::Duration;
 
+pub use compositor_toolkit::{Anchor, KeyboardInteractivity, Layer, LayerOptions, Margin};
 use compositor_toolkit::{
     Client, CursorShape, Error, Event, KeyboardEvent, ObjectId, PointerEvent, SurfaceId,
     ToplevelOptions, Value,
@@ -53,6 +55,11 @@ pub struct WindowOptions {
     /// says false, and then serves the `Ui`'s copies and pastes itself
     /// (`Ui::take_copied`, `Ui::take_paste_request`, `Ui::paste`).
     pub clipboard: bool,
+    /// A layer-shell surface placed as this says -- a bar, a dock, a
+    /// panel held against a screen's edge (`zwlr_layer_shell_v1`) --
+    /// rather than a toplevel; `title` and `min_size` are then unused, and
+    /// `size` is what the compositor fills in where the options say 0.
+    pub layer: Option<LayerOptions>,
 }
 
 impl Default for WindowOptions {
@@ -65,6 +72,7 @@ impl Default for WindowOptions {
             min_size: (0, 0),
             resize_edges: false,
             clipboard: true,
+            layer: None,
         }
     }
 }
@@ -374,13 +382,16 @@ impl Window {
     /// The window, drawn on the CPU.
     fn opened(root: Common, options: WindowOptions) -> Result<Self, Error> {
         let mut client = Client::connect()?;
-        let surface = client.toplevel(&ToplevelOptions {
-            title: options.title.clone(),
-            app_id: options.app_id.clone(),
-            size: options.size,
-            min_size: options.min_size,
-            ..ToplevelOptions::default()
-        })?;
+        let surface = match &options.layer {
+            Some(layer) => client.layer_surface(layer)?,
+            None => client.toplevel(&ToplevelOptions {
+                title: options.title.clone(),
+                app_id: options.app_id.clone(),
+                size: options.size,
+                min_size: options.min_size,
+                ..ToplevelOptions::default()
+            })?,
+        };
         let clipboard = if options.clipboard {
             Clipboard::bind(&mut client)
         } else {
@@ -423,6 +434,23 @@ impl Window {
             compositor_toolkit::WindowState::Restored
         };
         self.client.set_window_state(self.surface, state);
+    }
+
+    /// Place a layer surface anew: its size, edges, zone, margins or
+    /// keyboard (`output` and `namespace` stay as opened). Nothing for a
+    /// toplevel.
+    pub fn set_layer(&mut self, layer: LayerOptions) {
+        if self.options.layer.is_some() {
+            self.client.set_layer_options(self.surface, &layer);
+            self.options.layer = Some(layer);
+        }
+    }
+
+    /// Where the pointer reaches the window, in logical pixels; `None`
+    /// for everywhere. A layer surface wider than what it draws -- a
+    /// popover's room above a dock -- lets the pointer through elsewhere.
+    pub fn set_input_region(&mut self, region: Option<&[compositor_toolkit::Rect]>) {
+        self.client.set_input_region(self.surface, region);
     }
 
     /// Minimize it.
