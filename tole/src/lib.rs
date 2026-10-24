@@ -22,6 +22,8 @@ pub mod files;
 mod flick;
 mod focus;
 mod folder;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 pub mod handles;
 pub mod image;
 mod input;
@@ -192,18 +194,21 @@ impl Frame {
 const DAMAGE_RECTS: usize = 8;
 
 impl Ui {
-    /// Draw into `frame` what changed since it was last drawn into, and
-    /// answer those places in buffer pixels (`x`, `y`, `width`, `height`)
-    /// -- empty when nothing changed. A frame drawn into for the first
-    /// time is drawn whole, and answers the whole of it. The frame must be
-    /// at the `Ui`'s scale; make a new one when the size or scale changes.
-    pub fn render_into(&mut self, frame: &mut Frame) -> Vec<(u32, u32, u32, u32)> {
+    /// The scene now, and where it differs from `before` (drawn at
+    /// `before_scale` into a frame of `(width, height)` buffer pixels),
+    /// merged and in buffer pixels; the whole frame when there is nothing
+    /// to compare with or the scale changed.
+    pub(crate) fn damage_since(
+        &mut self,
+        before: Option<&damage::Scene>,
+        before_scale: f32,
+        (width, height): (u32, u32),
+    ) -> (damage::Scene, Vec<(u32, u32, u32, u32)>) {
         let scale = self.scale();
         let scene = self.scene_with_items();
-        let (width, height) = frame.pixel_size();
-        let s = frame.scale.max(f32::EPSILON);
+        let s = before_scale.max(f32::EPSILON);
         let whole = Rect::new(0.0, 0.0, width as f32 / s, height as f32 / s);
-        let logical = match (&frame.scene, (scale - frame.scale).abs() < f32::EPSILON) {
+        let logical = match (before, (scale - before_scale).abs() < f32::EPSILON) {
             (Some(before), true) => damage::merge(scene.damage_since(before), DAMAGE_RECTS),
             _ => vec![whole],
         };
@@ -218,6 +223,18 @@ impl Ui {
                 pixels.push((x0, y0, x1 - x0, y1 - y0));
             }
         }
+        (scene, pixels)
+    }
+
+    /// Draw into `frame` what changed since it was last drawn into, and
+    /// answer those places in buffer pixels (`x`, `y`, `width`, `height`)
+    /// -- empty when nothing changed. A frame drawn into for the first
+    /// time is drawn whole, and answers the whole of it. The frame must be
+    /// at the `Ui`'s scale; make a new one when the size or scale changes.
+    pub fn render_into(&mut self, frame: &mut Frame) -> Vec<(u32, u32, u32, u32)> {
+        let (scene, pixels) =
+            self.damage_since(frame.scene.as_ref(), frame.scale, frame.pixel_size());
+        let s = frame.scale.max(f32::EPSILON);
         let background = frame.background;
         let fill =
             tiny_skia::Color::from_rgba8(background.r, background.g, background.b, background.a);

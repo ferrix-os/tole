@@ -637,7 +637,12 @@ pub fn run_window(demo: &Demo) -> Result<(), String> {
             up = true;
             use std::io::Write as _;
             let mut out = std::io::stdout();
-            let _ = writeln!(out, "tole-examples: {} is up, {w}x{h}", demo.name);
+            let _ = writeln!(
+                out,
+                "tole-examples: {} is up, {w}x{h}, drawn by {}",
+                demo.name,
+                window.renderer()
+            );
             let _ = out.flush();
         }
     }
@@ -674,6 +679,85 @@ pub fn render(demo: &Demo, scale: f32) -> Option<Vec<u8>> {
         frame.height(),
         frame.data(),
     ))
+}
+
+/// How far apart two frames of one size are.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Difference {
+    /// Pixels compared.
+    pub pixels: usize,
+    /// Pixels where some channel differs at all.
+    pub differing: usize,
+    /// Pixels where some channel differs by more than `tolerance`.
+    pub over: usize,
+    /// The largest difference of any channel.
+    pub max: u8,
+    /// The mean of each pixel's largest channel difference.
+    pub mean: f64,
+    /// Pixels over the tolerance with no edge at them: all eight
+    /// neighbours in `a` the same as the pixel itself.
+    pub inside: usize,
+}
+
+/// `a` against `b`, premultiplied RGBA frames `width` pixels wide,
+/// counting the pixels more than `tolerance` levels apart in some
+/// channel, and those of them where `a` has no edge.
+#[must_use]
+pub fn difference(a: &[u8], b: &[u8], width: usize, tolerance: u8) -> Difference {
+    let mut d = Difference::default();
+    let mut sum = 0u64;
+    let width = width.max(1);
+    let height = a.len() / 4 / width;
+    let pixel = |x: usize, y: usize| a.get((y * width + x) * 4..(y * width + x) * 4 + 4);
+    for (i, (p, q)) in a.chunks_exact(4).zip(b.chunks_exact(4)).enumerate() {
+        let most = p
+            .iter()
+            .zip(q)
+            .map(|(x, y)| x.abs_diff(*y))
+            .max()
+            .unwrap_or(0);
+        d.pixels += 1;
+        sum += u64::from(most);
+        d.max = d.max.max(most);
+        if most > 0 {
+            d.differing += 1;
+        }
+        if most > tolerance {
+            d.over += 1;
+            let (x, y) = (i % width, i / width);
+            let edge = (y.saturating_sub(1)..=(y + 1).min(height.saturating_sub(1))).any(|ny| {
+                (x.saturating_sub(1)..=(x + 1).min(width - 1)).any(|nx| pixel(nx, ny) != Some(p))
+            });
+            if !edge {
+                d.inside += 1;
+            }
+        }
+    }
+    d.mean = sum as f64 / d.pixels.max(1) as f64;
+    d
+}
+
+/// `demo` drawn at `scale` by the CPU renderer and by the GPU on `gpu`,
+/// both whole frames on transparent: (CPU, GPU) pixmaps.
+///
+/// # Errors
+///
+/// The demo was not made, or the GPU failed.
+pub fn both(
+    demo: &Demo,
+    scale: f32,
+    gpu: &tole::gpu::Gpu,
+) -> Result<(tole::tiny_skia::Pixmap, tole::tiny_skia::Pixmap), String> {
+    let mut ui = Ui::new(fonts());
+    ui.set_scale(scale);
+    let root = (demo.make)(&mut ui).ok_or("the demo was not made")?;
+    let width = ui.get(root.width).round().max(1.0) as u32;
+    let height = ui.get(root.height).round().max(1.0) as u32;
+    let cpu = ui
+        .render((width, height), Color::TRANSPARENT)
+        .ok_or("no CPU frame")?;
+    let gpu = ui.render_gpu(gpu, (width, height), Color::TRANSPARENT)?;
+    Ok((cpu, gpu))
 }
 
 #[cfg(test)]
@@ -1488,6 +1572,61 @@ mod tests {
         for demo in &DEMOS {
             let png = render(demo, 1.0).expect("drawn");
             assert!(png.len() > 1000, "{}", demo.name);
+        }
+    }
+
+    /// Every demo drawn on the GPU against the CPU's frame: the same
+    /// pixels but where an edge or a glyph partly covers one
+    /// (docs/UI-FRAMEWORK.md §5). Skipped, and said, without a Vulkan
+    /// device.
+    #[test]
+    fn every_demo_on_the_gpu_is_the_cpu_frame_within_the_tolerance() {
+        use std::io::Write as _;
+        let gpu = match tole::gpu::Gpu::new(false) {
+            Ok(gpu) => gpu,
+            Err(why) => {
+                let _ = writeln!(std::io::stdout(), "no GPU to compare on: {why}");
+                return;
+            }
+        };
+        let _ = writeln!(std::io::stdout(), "on {}", gpu.name());
+        let only = std::env::var("TOLE_GPU_ONLY").ok();
+        for demo in DEMOS.iter().filter(|d| {
+            only.as_deref()
+                .is_none_or(|o| o.split(',').any(|n| n == d.name))
+        }) {
+            for scale in [1.0, 2.0] {
+                let (cpu, on_gpu) = super::both(demo, scale, &gpu).expect("drawn");
+                let d = super::difference(cpu.data(), on_gpu.data(), cpu.width() as usize, 8);
+                let _ = writeln!(std::io::stdout(), "{:20} x{scale}: {d:?}", demo.name);
+                if std::env::var_os("TOLE_GPU_DUMP").is_some() {
+                    let dir =
+                        std::path::PathBuf::from(std::env::var_os("TOLE_GPU_DUMP").expect("set"));
+                    let name = |what: &str| dir.join(format!("{}-{scale}-{what}.png", demo.name));
+                    std::fs::write(
+                        name("cpu"),
+                        tole::png::encode(cpu.width(), cpu.height(), cpu.data()),
+                    )
+                    .expect("written");
+                    std::fs::write(
+                        name("gpu"),
+                        tole::png::encode(on_gpu.width(), on_gpu.height(), on_gpu.data()),
+                    )
+                    .expect("written");
+                }
+                assert_eq!(
+                    d.inside, 0,
+                    "{} x{scale}: off where nothing has an edge",
+                    demo.name
+                );
+                assert!(d.max <= 64, "{} x{scale}: {d:?}", demo.name);
+                assert!(
+                    d.over * 200 <= d.pixels,
+                    "{} x{scale}: over 0.5% off: {d:?}",
+                    demo.name
+                );
+                assert!(d.mean < 0.5, "{} x{scale}: {d:?}", demo.name);
+            }
         }
     }
 }

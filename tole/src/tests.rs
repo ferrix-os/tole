@@ -2163,3 +2163,174 @@ fn a_following_list_view_grows_with_a_vec_model_pushed_to() {
         );
     }
 }
+
+/// The GPU renderer against itself and against the CPU's, on whatever
+/// Vulkan device the machine has (`TOLE_GPU_DEVICE` chooses one); each
+/// test says so and passes when there is none, as a static build's
+/// program falls back to the CPU.
+#[cfg(feature = "gpu")]
+mod gpu {
+    use std::io::Write as _;
+    use std::rc::Rc;
+
+    use super::{Step, damage_scene, ui};
+    use crate::Color;
+    use crate::gpu::{Gpu, GpuFrame};
+
+    /// The device, or why not.
+    fn device() -> Option<Gpu> {
+        match Gpu::new(false) {
+            Ok(gpu) => Some(gpu),
+            Err(why) => {
+                let _ = writeln!(
+                    std::io::stdout(),
+                    "no Vulkan device, nothing to check: {why}"
+                );
+                None
+            }
+        }
+    }
+
+    /// How many pixels differ at all, and the largest difference.
+    fn compare(a: &[u8], b: &[u8]) -> (usize, u8) {
+        let differing = a
+            .chunks_exact(4)
+            .zip(b.chunks_exact(4))
+            .filter(|(p, q)| p != q)
+            .count();
+        let worst = a.iter().zip(b).map(|(x, y)| x.abs_diff(*y)).max();
+        (differing, worst.unwrap_or(0))
+    }
+
+    #[test]
+    fn a_gpu_frame_redraws_only_what_changed_and_matches_a_whole_one() {
+        let Some(gpu) = device() else {
+            return;
+        };
+        let white = Color::hex(0xff_ff_ff);
+        let mut ui = ui();
+        ui.set_scale(2.0);
+        let (root, boxed, label) = damage_scene(&mut ui);
+        let mut frame = GpuFrame::new(&gpu, (200, 120), 2.0, white).unwrap();
+        assert_eq!(ui.render_into_gpu(&mut frame).unwrap(), [(0, 0, 400, 240)]);
+        assert!(ui.render_into_gpu(&mut frame).unwrap().is_empty());
+        boxed.props.color.set(&mut ui, Color::hex(0xd2_38_2b));
+        assert_eq!(ui.render_into_gpu(&mut frame).unwrap(), [(18, 18, 84, 64)]);
+        let steps: Vec<Step> = vec![
+            Box::new(move |ui| boxed.common.x.set(ui, 120.0)),
+            Box::new(move |ui| label.props.text.set(ui, Rc::from("a longer label now"))),
+            Box::new(move |ui| boxed.common.opacity.set(ui, 0.5)),
+            Box::new(move |ui| boxed.props.border_width.set(ui, 2.0)),
+            Box::new(move |ui| {
+                let extra = crate::handles::Rectangle::new(ui, Some(root.id)).unwrap();
+                extra.common.width.set(ui, 30.0);
+                extra.common.height.set(ui, 30.0);
+                extra.props.color.set(ui, Color::hex(0x2f_a3_5a));
+            }),
+            Box::new(move |ui| ui.destroy(boxed.id)),
+        ];
+        for (index, step) in steps.iter().enumerate() {
+            step(&mut ui);
+            assert!(!ui.render_into_gpu(&mut frame).unwrap().is_empty());
+            let kept = frame.read(&mut ui.text.fonts).unwrap();
+            let whole = ui.render_gpu(&gpu, (200, 120), white).unwrap();
+            assert_eq!(
+                compare(kept.data(), whole.data()),
+                (0, 0),
+                "step {index}: the kept GPU frame differs from a whole one"
+            );
+            let cpu = ui.render((200, 120), white).unwrap();
+            let (_, worst) = compare(cpu.data(), whole.data());
+            assert!(worst <= 64, "step {index}: {worst} levels off the CPU's");
+        }
+    }
+
+    #[test]
+    fn a_gpu_frame_matches_a_whole_one_as_a_rounded_box_wanders() {
+        let Some(gpu) = device() else {
+            return;
+        };
+        let white = Color::hex(0xff_ff_ff);
+        for scale in [1.0, 1.5, 2.0] {
+            let mut ui = ui();
+            ui.set_scale(scale);
+            let (_, boxed, label) = damage_scene(&mut ui);
+            boxed.props.radius.set(&mut ui, 11.0);
+            boxed.props.border_width.set(&mut ui, 1.5);
+            boxed
+                .props
+                .border_color
+                .set(&mut ui, Color::hex(0x1a_1a_1a));
+            let mut frame = GpuFrame::new(&gpu, (200, 120), scale, white).unwrap();
+            let _ = ui.render_into_gpu(&mut frame).unwrap();
+            for step in 0..12_u16 {
+                let t = f32::from(step);
+                boxed.common.x.set(&mut ui, (t * 7.3) % 170.0);
+                boxed.common.y.set(&mut ui, (t * 4.1) % 95.0);
+                if step % 5 == 0 {
+                    label
+                        .props
+                        .text
+                        .set(&mut ui, Rc::from(format!("step {step}")));
+                }
+                let _ = ui.render_into_gpu(&mut frame).unwrap();
+                let kept = frame.read(&mut ui.text.fonts).unwrap();
+                let whole = ui.render_gpu(&gpu, (200, 120), white).unwrap();
+                assert_eq!(
+                    compare(kept.data(), whole.data()),
+                    (0, 0),
+                    "scale {scale}, step {step}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_device_is_an_error_to_fall_back_from() {
+        let none = crate::gpu::device_named(false, "no device is called this");
+        let why = none.expect_err("no such device");
+        assert!(why.contains("no Vulkan"), "{why}");
+    }
+
+    #[test]
+    fn the_choice_is_what_was_asked() {
+        use crate::gpu::Choice;
+        for choice in [Choice::Cpu, Choice::Gpu, Choice::Auto] {
+            assert_eq!(choice.resolve(), choice);
+        }
+    }
+
+    /// The SPIR-V kept beside the GLSL is what the GLSL compiles to, when
+    /// the machine has glslangValidator to say so.
+    #[test]
+    fn the_shaders_are_compiled_from_their_source() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/gpu/shaders");
+        let scratch = std::env::temp_dir().join(format!("tole-shaders-{}", std::process::id()));
+        std::fs::create_dir_all(&scratch).unwrap();
+        for stage in ["vert", "frag"] {
+            let out = scratch.join(format!("quad.{stage}.spv"));
+            let ran = std::process::Command::new("glslangValidator")
+                .args(["-V", "--target-env", "vulkan1.3"])
+                .arg(dir.join(format!("quad.{stage}")))
+                .arg("-o")
+                .arg(&out)
+                .output();
+            let Ok(ran) = ran else {
+                let _ = writeln!(
+                    std::io::stdout(),
+                    "no glslangValidator: the SPIR-V is not checked"
+                );
+                return;
+            };
+            assert!(
+                ran.status.success(),
+                "{}",
+                String::from_utf8_lossy(&ran.stdout)
+            );
+            let made = std::fs::read(&out).unwrap();
+            let kept = std::fs::read(dir.join(format!("quad.{stage}.spv"))).unwrap();
+            assert!(made == kept, "quad.{stage}.spv is stale: recompile it");
+        }
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+}

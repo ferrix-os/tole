@@ -51,6 +51,11 @@ pub(crate) struct TextEngine {
     resolved: HashMap<Key, compositor_text::Font>,
     /// Shaped runs, by font and text.
     runs: HashMap<(Key, Rc<str>), Rc<Run>>,
+    /// Runs cut with `…`, by font, text and the width they were cut to:
+    /// a table's long lines are cut on every frame they are drawn, and
+    /// shaping each again cost the lode viewer's scrolled frames most of
+    /// their time.
+    elided: HashMap<(Key, Rc<str>, u32), Rc<Run>>,
 }
 
 impl std::fmt::Debug for TextEngine {
@@ -69,6 +74,7 @@ impl TextEngine {
             fonts,
             resolved: HashMap::new(),
             runs: HashMap::new(),
+            elided: HashMap::new(),
         }
     }
 
@@ -123,11 +129,22 @@ impl TextEngine {
         if run.width <= max {
             return run;
         }
-        let resolved = self.font(&Key::of(font, scale));
-        Rc::new(
+        let key = Key::of(font, scale);
+        let max = max.max(1.0);
+        let cache_key = (key, Rc::clone(text), max.to_bits());
+        if let Some(run) = self.elided.get(&cache_key) {
+            return Rc::clone(run);
+        }
+        if self.elided.len() >= RUNS_MAX {
+            self.elided.clear();
+        }
+        let resolved = self.font(&cache_key.0);
+        let run = Rc::new(
             self.fonts
-                .shape_ellipsized(&resolved, text, max.max(1.0), Ellipsize::End),
-        )
+                .shape_ellipsized(&resolved, text, max, Ellipsize::End),
+        );
+        let _ = self.elided.insert(cache_key, Rc::clone(&run));
+        run
     }
 
     /// `font`'s ascent and descent at `scale`, in buffer pixels.

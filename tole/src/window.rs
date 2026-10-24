@@ -93,6 +93,19 @@ fn edge_at(x: f32, y: f32, size: (u32, u32)) -> (u32, CursorShape) {
     }
 }
 
+/// How a window's frames went, for a program that measures itself.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FrameStats {
+    /// Frames handed to the compositor.
+    pub frames: u64,
+    /// How long the last one took to draw and hand over.
+    pub last: Duration,
+    /// How long all of them took.
+    pub total: Duration,
+    /// When the last one was handed over.
+    pub at: Option<std::time::Instant>,
+}
+
 /// A tree in a toplevel.
 #[derive(Debug)]
 pub struct Window {
@@ -127,6 +140,11 @@ pub struct Window {
     maximized: bool,
     /// The last key press's serial, which a program's own copy names.
     key_serial: u32,
+    /// How the frames went.
+    stats: FrameStats,
+    /// The GPU's frames, when it draws them.
+    #[cfg(feature = "gpu")]
+    presenter: Option<crate::gpu::present::Presenter>,
 }
 
 /// The types text is offered and read as, best first.
@@ -328,6 +346,33 @@ impl Window {
     ///
     /// No compositor, or one without `xdg_wm_base`.
     pub fn open(root: Common, options: WindowOptions) -> Result<Self, Error> {
+        #[cfg(feature = "gpu")]
+        return Self::open_with(root, options, crate::gpu::Choice::FromEnv);
+        #[cfg(not(feature = "gpu"))]
+        Self::opened(root, options)
+    }
+
+    /// [`Window::open`], its frames drawn by the renderer `choice` names:
+    /// the GPU falls back to the CPU, said on standard error, when there
+    /// is no Vulkan device or it fails. [`Window::open`] takes what
+    /// `TOLE_RENDERER` says, and the CPU when it says nothing.
+    ///
+    /// # Errors
+    ///
+    /// As [`Window::open`].
+    #[cfg(feature = "gpu")]
+    pub fn open_with(
+        root: Common,
+        options: WindowOptions,
+        choice: crate::gpu::Choice,
+    ) -> Result<Self, Error> {
+        let mut window = Self::opened(root, options)?;
+        window.presenter = presenter_for(choice, &mut window.client);
+        Ok(window)
+    }
+
+    /// The window, drawn on the CPU.
+    fn opened(root: Common, options: WindowOptions) -> Result<Self, Error> {
         let mut client = Client::connect()?;
         let surface = client.toplevel(&ToplevelOptions {
             title: options.title.clone(),
@@ -342,6 +387,8 @@ impl Window {
             None
         };
         Ok(Window {
+            #[cfg(feature = "gpu")]
+            presenter: None,
             clipboard,
             client,
             surface,
@@ -357,6 +404,7 @@ impl Window {
             edge: 0,
             maximized: false,
             key_serial: 0,
+            stats: FrameStats::default(),
         })
     }
 
@@ -388,6 +436,23 @@ impl Window {
     #[must_use]
     pub fn key_serial(&self) -> u32 {
         self.key_serial
+    }
+
+    /// How its frames went so far.
+    #[must_use]
+    pub fn frame_stats(&self) -> FrameStats {
+        self.stats
+    }
+
+    /// What draws its frames, in words: `cpu`, or `gpu:` with the
+    /// device's name and how the frames reach the compositor.
+    #[must_use]
+    pub fn renderer(&self) -> String {
+        #[cfg(feature = "gpu")]
+        if let Some(presenter) = &self.presenter {
+            return presenter.describe();
+        }
+        "cpu".to_owned()
     }
 
     /// Its size in logical pixels, once the compositor gave one.
@@ -461,7 +526,15 @@ impl Window {
         if self.options.clipboard {
             ui.set_clipboard_external(self.clipboard.is_some());
         }
-        let events = self.client.dispatch(timeout)?;
+        #[cfg(feature = "gpu")]
+        let mut events = self
+            .presenter
+            .as_mut()
+            .map(crate::gpu::present::Presenter::take_deferred)
+            .unwrap_or_default();
+        #[cfg(not(feature = "gpu"))]
+        let mut events = Vec::new();
+        events.extend(self.client.dispatch(timeout)?);
         ui.tick(self.opened.elapsed().as_secs_f64() * 1000.0);
         let mut rest = Vec::new();
         for event in events {
@@ -497,6 +570,12 @@ impl Window {
                 }
                 Event::Pointer(pointer) => self.pointer(ui, pointer, &mut rest),
                 Event::Keyboard(keyboard) => self.keyboard(ui, keyboard, &mut rest),
+                #[cfg(feature = "gpu")]
+                Event::Object { object, opcode, .. }
+                    if self
+                        .presenter
+                        .as_mut()
+                        .is_some_and(|p| p.event(object, opcode)) => {}
                 Event::Object {
                     object,
                     opcode,
@@ -631,11 +710,59 @@ impl Window {
         rest.push(Event::Keyboard(keyboard));
     }
 
-    /// Draw what changed and hand it over.
+    /// Draw what changed and hand it over, counting the frames handed.
     fn draw(&mut self, ui: &mut Ui) -> Result<(), Error> {
+        let started = std::time::Instant::now();
+        let was = self.awaiting;
+        self.awaiting = false;
+        let drawn = self.draw_frame(ui);
+        if self.awaiting {
+            let took = started.elapsed();
+            self.stats.frames += 1;
+            self.stats.last = took;
+            self.stats.total += took;
+            self.stats.at = Some(std::time::Instant::now());
+        } else {
+            self.awaiting = was;
+        }
+        drawn
+    }
+
+    /// [`Window::draw`]'s work.
+    fn draw_frame(&mut self, ui: &mut Ui) -> Result<(), Error> {
         let Some(size) = self.size else {
             return Ok(());
         };
+        #[cfg(feature = "gpu")]
+        if let Some(presenter) = self.presenter.as_mut() {
+            let drawn = presenter.draw(
+                ui,
+                &mut self.client,
+                self.surface,
+                (size, self.scale),
+                self.options.background,
+            );
+            match drawn {
+                Ok(Some(drawn)) => {
+                    let _ = ui.take_changed();
+                    self.pending = false;
+                    self.awaiting |= drawn;
+                    return Ok(());
+                }
+                // Every buffer is the compositor's: drawn when one comes
+                // back, which wakes the dispatch.
+                Ok(None) => return Ok(()),
+                Err(why) => {
+                    crate::gpu::present::warn(&format!(
+                        "tole: the GPU failed ({why}); drawing on the CPU from now on"
+                    ));
+                    if let Some(presenter) = self.presenter.take() {
+                        presenter.close(&mut self.client);
+                    }
+                    self.frame = None;
+                }
+            }
+        }
         let scale = self.scale as f32;
         let fits = self
             .frame
@@ -666,5 +793,27 @@ impl Window {
             self.awaiting = true;
         }
         Ok(())
+    }
+}
+
+/// The GPU's frames for a window, when `choice` asks for them and a
+/// device is there; the reason said on standard error when it is not.
+#[cfg(feature = "gpu")]
+fn presenter_for(
+    choice: crate::gpu::Choice,
+    client: &mut Client,
+) -> Option<crate::gpu::present::Presenter> {
+    use crate::gpu::Choice;
+    let hardware_only = match choice.resolve() {
+        Choice::Gpu => false,
+        Choice::Auto => true,
+        Choice::Cpu | Choice::FromEnv => return None,
+    };
+    match crate::gpu::Gpu::new(hardware_only) {
+        Ok(gpu) => Some(crate::gpu::present::Presenter::new(gpu, client)),
+        Err(why) => {
+            crate::gpu::present::warn(&format!("tole: drawing on the CPU: {why}"));
+            None
+        }
     }
 }

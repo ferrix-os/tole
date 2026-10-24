@@ -15,6 +15,9 @@ path = "src/lib.rs"
 # The window: a toplevel through compositor-toolkit, Ferrix's own Wayland
 # client runtime, which also runs on any Wayland desktop (no libwayland).
 wayland = ["dep:compositor-toolkit"]
+# The GPU renderer (docs/UI-FRAMEWORK.md §4.6): Vulkan, loaded at run time,
+# so a program built with it still runs, on the CPU, where there is none.
+gpu = ["dep:ash"]
 
 [dependencies]
 # Pictures for the `Image` item and the file chooser's preview: PNG, JPEG
@@ -32,6 +35,19 @@ compositor-text = { path = "../../compositor/text" }
 # the compositor's tree through its image decoders.
 miniz_oxide = { version = "0.8.9", default-features = false, features = ["with-alloc"] }
 tiny-skia = { version = "=0.12.0", default-features = false, features = ["std", "simd"] }
+
+# Vulkan's bindings, for the GPU renderer: MIT or Apache-2.0. `loaded`
+# opens libvulkan.so.1 at run time (through libloading, ISC) rather than
+# linking it, so its absence is an error to fall back from, not a failed
+# start.
+[target.'cfg(not(target_env = "musl"))'.dependencies]
+ash = { version = "=0.38.0", default-features = false, features = ["loaded", "debug", "std"], optional = true }
+
+# A static program cannot load a library, and the self-contained musl
+# toolchain has no libdl to link libloading against: there the bindings
+# come without the loader, and the GPU renderer says it has no Vulkan.
+[target.'cfg(target_env = "musl")'.dependencies]
+ash = { version = "=0.38.0", default-features = false, features = ["debug", "std"], optional = true }
 
 [lints]
 workspace = true

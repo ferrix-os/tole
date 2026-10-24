@@ -117,32 +117,76 @@ impl<'a, 'p> CpuRenderer<'a, 'p> {
 
     /// A rounded rectangle's path, in buffer pixels.
     fn rounded(&self, place: Rect, radius: f32) -> Option<tiny_skia::Path> {
-        let s = self.scale;
-        let (x, y, w, h) = (place.x * s, place.y * s, place.w * s, place.h * s);
-        if w <= 0.0 || h <= 0.0 {
-            return None;
+        rounded_path(place, radius, self.scale)
+    }
+}
+
+/// A rounded rectangle's path at `s` buffer pixels a logical one: four
+/// cubic quarter circles, as the lode viewer drew it.
+pub(crate) fn rounded_path(place: Rect, radius: f32, s: f32) -> Option<tiny_skia::Path> {
+    let (x, y, w, h) = (place.x * s, place.y * s, place.w * s, place.h * s);
+    if w <= 0.0 || h <= 0.0 {
+        return None;
+    }
+    let r = (radius * s).min(w / 2.0).min(h / 2.0);
+    if r <= 0.0 {
+        return Some(PathBuilder::from_rect(tiny_skia::Rect::from_xywh(
+            x, y, w, h,
+        )?));
+    }
+    // A quarter circle's control points are this far along its tangents.
+    let k = r * 0.552_284_8;
+    let mut path = PathBuilder::new();
+    path.move_to(x + r, y);
+    path.line_to(x + w - r, y);
+    path.cubic_to(x + w - r + k, y, x + w, y + r - k, x + w, y + r);
+    path.line_to(x + w, y + h - r);
+    path.cubic_to(x + w, y + h - r + k, x + w - r + k, y + h, x + w - r, y + h);
+    path.line_to(x + r, y + h);
+    path.cubic_to(x + r - k, y + h, x, y + h - r + k, x, y + h - r);
+    path.line_to(x, y + r);
+    path.cubic_to(x, y + r - k, x + r - k, y, x + r, y);
+    path.close();
+    path.finish()
+}
+
+/// A tole path as tiny-skia's, in buffer pixels at `s`.
+pub(crate) fn skia_path(path: &crate::shape::Path, s: f32) -> Option<tiny_skia::Path> {
+    use crate::shape::PathCmd;
+    let mut builder = PathBuilder::new();
+    for cmd in path.cmds() {
+        match *cmd {
+            PathCmd::Move(x, y) => builder.move_to(x * s, y * s),
+            PathCmd::Line(x, y) => builder.line_to(x * s, y * s),
+            PathCmd::Quad(cx, cy, x, y) => builder.quad_to(cx * s, cy * s, x * s, y * s),
+            PathCmd::Cubic(a, b, c, d, x, y) => {
+                builder.cubic_to(a * s, b * s, c * s, d * s, x * s, y * s);
+            }
+            PathCmd::Close => builder.close(),
+            PathCmd::Circle(x, y, r) => builder.push_circle(x * s, y * s, r * s),
         }
-        let r = (radius * s).min(w / 2.0).min(h / 2.0);
-        if r <= 0.0 {
-            return Some(PathBuilder::from_rect(tiny_skia::Rect::from_xywh(
-                x, y, w, h,
-            )?));
-        }
-        // A quarter circle's control points are this far along its
-        // tangents.
-        let k = r * 0.552_284_8;
-        let mut path = PathBuilder::new();
-        path.move_to(x + r, y);
-        path.line_to(x + w - r, y);
-        path.cubic_to(x + w - r + k, y, x + w, y + r - k, x + w, y + r);
-        path.line_to(x + w, y + h - r);
-        path.cubic_to(x + w, y + h - r + k, x + w - r + k, y + h, x + w - r, y + h);
-        path.line_to(x + r, y + h);
-        path.cubic_to(x + r - k, y + h, x, y + h - r + k, x, y + h - r);
-        path.line_to(x, y + r);
-        path.cubic_to(x, y + r - k, x + r - k, y, x + r, y);
-        path.close();
-        path.finish()
+    }
+    builder.finish()
+}
+
+/// How a path of `style` is stroked `width` wide at `s`.
+pub(crate) fn line_stroke(style: crate::shape::LineStyle, width: f32, s: f32) -> Stroke {
+    Stroke {
+        width: width * s,
+        line_join: if style.miter {
+            tiny_skia::LineJoin::Miter
+        } else {
+            tiny_skia::LineJoin::Round
+        },
+        line_cap: match style.cap {
+            crate::shape::LineCap::Butt => tiny_skia::LineCap::Butt,
+            crate::shape::LineCap::Round => tiny_skia::LineCap::Round,
+            crate::shape::LineCap::Square => tiny_skia::LineCap::Square,
+        },
+        dash: (style.dash > 0.0)
+            .then(|| tiny_skia::StrokeDash::new(vec![style.dash * s, style.dash * s], 0.0))
+            .flatten(),
+        ..Stroke::default()
     }
 }
 
@@ -233,7 +277,6 @@ impl Renderer for CpuRenderer<'_, '_> {
     }
 
     fn path(&mut self, path: &crate::shape::Path, fill: Color, stroke: Color, width: f32) {
-        use crate::shape::PathCmd;
         let Some(bounds) = path.bounds() else {
             return;
         };
@@ -247,44 +290,14 @@ impl Renderer for CpuRenderer<'_, '_> {
             return;
         };
         let s = self.scale;
-        let mut builder = PathBuilder::new();
-        for cmd in path.cmds() {
-            match *cmd {
-                PathCmd::Move(x, y) => builder.move_to(x * s, y * s),
-                PathCmd::Line(x, y) => builder.line_to(x * s, y * s),
-                PathCmd::Quad(cx, cy, x, y) => builder.quad_to(cx * s, cy * s, x * s, y * s),
-                PathCmd::Cubic(a, b, c, d, x, y) => {
-                    builder.cubic_to(a * s, b * s, c * s, d * s, x * s, y * s);
-                }
-                PathCmd::Close => builder.close(),
-                PathCmd::Circle(x, y, r) => builder.push_circle(x * s, y * s, r * s),
-            }
-        }
-        let Some(skia_path) = builder.finish() else {
+        let Some(skia_path) = skia_path(path, s) else {
             return;
         };
         if !fill.is_transparent() {
             self.draw_path(&skia_path, &paint(fill, true), None, masked);
         }
         if !stroke.is_transparent() && width > 0.0 {
-            let style = path.style();
-            let line = Stroke {
-                width: width * s,
-                line_join: if style.miter {
-                    tiny_skia::LineJoin::Miter
-                } else {
-                    tiny_skia::LineJoin::Round
-                },
-                line_cap: match style.cap {
-                    crate::shape::LineCap::Butt => tiny_skia::LineCap::Butt,
-                    crate::shape::LineCap::Round => tiny_skia::LineCap::Round,
-                    crate::shape::LineCap::Square => tiny_skia::LineCap::Square,
-                },
-                dash: (style.dash > 0.0)
-                    .then(|| tiny_skia::StrokeDash::new(vec![style.dash * s, style.dash * s], 0.0))
-                    .flatten(),
-                ..Stroke::default()
-            };
+            let line = line_stroke(path.style(), width, s);
             self.draw_path(&skia_path, &paint(stroke, true), Some(&line), masked);
         }
     }
