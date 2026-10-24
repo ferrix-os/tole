@@ -494,7 +494,7 @@ impl<'a> GpuRenderer<'a> {
     /// Draw everything recorded so far, and go on from there.
     fn flush(&mut self) -> Result<(), String> {
         let after = After::Copy(Vec::new());
-        self.encode(&after, false)
+        self.encode(&after, false, true)
     }
 
     /// Draw everything recorded and run `after`.
@@ -502,7 +502,23 @@ impl<'a> GpuRenderer<'a> {
     /// # Errors
     ///
     /// The device failed; the target then holds no good frame.
-    pub(crate) fn finish(mut self, after: &After) -> Result<(), String> {
+    pub(crate) fn finish(self, after: &After) -> Result<(), String> {
+        self.end(after, true)
+    }
+
+    /// Draw everything recorded and run `after`, but do not wait for it:
+    /// the device runs it while the program goes on, until
+    /// [`Gpu::wait`] or the next frame.
+    ///
+    /// # Errors
+    ///
+    /// The device failed.
+    pub(crate) fn finish_in_flight(self, after: &After) -> Result<(), String> {
+        self.end(after, false)
+    }
+
+    /// [`GpuRenderer::finish`], waiting for the device when `wait`.
+    fn end(mut self, after: &After, wait: bool) -> Result<(), String> {
         if let Some(error) = self.error.take() {
             return Err(error);
         }
@@ -510,7 +526,7 @@ impl<'a> GpuRenderer<'a> {
         while self.depth > 0 {
             self.pop_opacity();
         }
-        self.encode(after, true)?;
+        self.encode(after, true, wait)?;
         if self.gpu.frame.is_multiple_of(64) {
             self.gpu.forget_unused(240);
         }
@@ -518,7 +534,7 @@ impl<'a> GpuRenderer<'a> {
     }
 
     /// Encode the batch, submit it and wait; then `after` when `last`.
-    fn encode(&mut self, after: &After, last: bool) -> Result<(), String> {
+    fn encode(&mut self, after: &After, last: bool, wait: bool) -> Result<(), String> {
         let gpu = &mut *self.gpu;
         let floats = self.instances.len();
         let mut slot = gpu.instances.take();
@@ -871,7 +887,11 @@ impl<'a> GpuRenderer<'a> {
         if last {
             self.after(after)?;
         }
-        self.gpu.submit_and_wait()
+        if wait {
+            self.gpu.submit_and_wait()
+        } else {
+            self.gpu.submit()
+        }
     }
 
     /// Record what `after` asks once the frame is drawn.

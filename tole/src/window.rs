@@ -153,6 +153,12 @@ pub struct Window {
     /// The GPU's frames, when it draws them.
     #[cfg(feature = "gpu")]
     presenter: Option<crate::gpu::present::Presenter>,
+    /// The GPU being made, and what the compositor said of dmabufs: the
+    /// window draws on the CPU until it is ready.
+    #[cfg(feature = "gpu")]
+    starting: Option<(crate::gpu::Pending, crate::gpu::present::Feedback)>,
+    /// Events read before the program asked, given with the next dispatch.
+    deferred: Vec<Event>,
 }
 
 /// The types text is offered and read as, best first.
@@ -375,7 +381,10 @@ impl Window {
         choice: crate::gpu::Choice,
     ) -> Result<Self, Error> {
         let mut window = Self::opened(root, options)?;
-        window.presenter = presenter_for(choice, &mut window.client);
+        if let Some((pending, said, events)) = start_gpu(choice, &mut window.client) {
+            window.starting = Some((pending, said));
+            window.deferred = events;
+        }
         Ok(window)
     }
 
@@ -400,6 +409,9 @@ impl Window {
         Ok(Window {
             #[cfg(feature = "gpu")]
             presenter: None,
+            #[cfg(feature = "gpu")]
+            starting: None,
+            deferred: Vec::new(),
             clipboard,
             client,
             surface,
@@ -543,6 +555,19 @@ impl Window {
         } else {
             timeout
         };
+        // While the device draws a frame, often enough to commit it as
+        // soon as it is drawn.
+        #[cfg(feature = "gpu")]
+        let timeout = if self
+            .presenter
+            .as_ref()
+            .is_some_and(crate::gpu::present::Presenter::in_flight)
+        {
+            let soon = Duration::from_millis(1);
+            Some(timeout.map_or(soon, |t| t.min(soon)))
+        } else {
+            timeout
+        };
         // And when the focused field's caret turns.
         let timeout = match ui.next_blink() {
             Some(ms) => {
@@ -562,7 +587,10 @@ impl Window {
             .unwrap_or_default();
         #[cfg(not(feature = "gpu"))]
         let mut events = Vec::new();
+        events.append(&mut self.deferred);
         events.extend(self.client.dispatch(timeout)?);
+        #[cfg(feature = "gpu")]
+        self.adopt_gpu();
         ui.tick(self.opened.elapsed().as_secs_f64() * 1000.0);
         let mut rest = Vec::new();
         for event in events {
@@ -616,6 +644,8 @@ impl Window {
                 other => rest.push(other),
             }
         }
+        #[cfg(feature = "gpu")]
+        self.settle_gpu();
         // What the text fields asked of the clipboard, unless the
         // program serves it itself.
         if self.options.clipboard
@@ -649,6 +679,58 @@ impl Window {
             self.draw(ui)?;
         }
         Ok(rest)
+    }
+
+    /// Take the GPU made on its thread, once it is: frames go to it from
+    /// the next one on, drawn whole; a device that could not be made is
+    /// said, and the CPU goes on.
+    #[cfg(feature = "gpu")]
+    fn adopt_gpu(&mut self) {
+        if !self
+            .starting
+            .as_ref()
+            .is_some_and(|(pending, _)| pending.ready())
+        {
+            return;
+        }
+        let Some((pending, said)) = self.starting.take() else {
+            return;
+        };
+        match pending.finish() {
+            Ok(gpu) => {
+                self.presenter = Some(crate::gpu::present::Presenter::new(
+                    gpu,
+                    &mut self.client,
+                    &said,
+                ));
+                self.pending = true;
+            }
+            Err(why) => crate::gpu::present::warn(&format!("tole: drawing on the CPU: {why}")),
+        }
+    }
+
+    /// The GPU's frame drawn while the program went on, committed once it
+    /// is; its callback, when it came, letting the next frame be drawn.
+    #[cfg(feature = "gpu")]
+    fn settle_gpu(&mut self) {
+        let Some(presenter) = self.presenter.as_mut() else {
+            return;
+        };
+        if let Err(why) = presenter.settle(&mut self.client, self.surface) {
+            crate::gpu::present::warn(&format!(
+                "tole: the GPU failed ({why}); drawing on the CPU from now on"
+            ));
+            if let Some(presenter) = self.presenter.take() {
+                presenter.close(&mut self.client);
+            }
+            self.frame = None;
+            self.awaiting = false;
+            self.pending = true;
+            return;
+        }
+        if presenter.take_frame() {
+            self.awaiting = false;
+        }
     }
 
     /// A pointer event: this window's go to the `Ui`.
@@ -824,24 +906,35 @@ impl Window {
     }
 }
 
-/// The GPU's frames for a window, when `choice` asks for them and a
-/// device is there; the reason said on standard error when it is not.
+/// Start the GPU for a window when `choice` asks for it: the compositor
+/// asked what dmabufs it takes and which device is its own, and that device
+/// made on a thread, which wakes the window's loop when done. `None` for
+/// the CPU.
 #[cfg(feature = "gpu")]
-fn presenter_for(
+fn start_gpu(
     choice: crate::gpu::Choice,
     client: &mut Client,
-) -> Option<crate::gpu::present::Presenter> {
+) -> Option<(
+    crate::gpu::Pending,
+    crate::gpu::present::Feedback,
+    Vec<Event>,
+)> {
     use crate::gpu::Choice;
     let hardware_only = match choice.resolve() {
         Choice::Gpu => false,
         Choice::Auto => true,
         Choice::Cpu | Choice::FromEnv => return None,
     };
-    match crate::gpu::Gpu::new(hardware_only) {
-        Ok(gpu) => Some(crate::gpu::present::Presenter::new(gpu, client)),
-        Err(why) => {
-            crate::gpu::present::warn(&format!("tole: drawing on the CPU: {why}"));
-            None
-        }
-    }
+    let (said, events) = crate::gpu::present::feedback(client);
+    let waker = client.waker().ok();
+    let pending = crate::gpu::Gpu::start(
+        hardware_only,
+        said.main,
+        Box::new(move || {
+            if let Some(waker) = waker {
+                waker.wake();
+            }
+        }),
+    );
+    Some((pending, said, events))
 }

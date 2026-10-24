@@ -12,9 +12,10 @@
 //! `wl_surface.damage_buffer`. Requests go out on the toolkit's surface
 //! through its generic requests, so the toolkit is unchanged.
 
-use compositor_toolkit::protocol::core::{WL_BUFFER, wl_buffer, wl_surface};
+use compositor_toolkit::protocol::core::{WL_BUFFER, WL_CALLBACK, wl_buffer, wl_surface};
 use compositor_toolkit::protocol::linux_dmabuf::{
-    ZWP_LINUX_BUFFER_PARAMS_V1, ZWP_LINUX_DMABUF_V1, zwp_linux_buffer_params_v1 as params,
+    ZWP_LINUX_BUFFER_PARAMS_V1, ZWP_LINUX_DMABUF_FEEDBACK_V1, ZWP_LINUX_DMABUF_V1,
+    zwp_linux_buffer_params_v1 as params, zwp_linux_dmabuf_feedback_v1 as feedback,
     zwp_linux_dmabuf_v1 as dmabuf,
 };
 use compositor_toolkit::{Client, Event, ObjectId, SurfaceId, Value};
@@ -50,6 +51,10 @@ struct Slot {
     owed: Option<Vec<(u32, u32, u32, u32)>>,
 }
 
+/// A frame the device is drawing: its buffer, its damage in buffer
+/// pixels, and its scale.
+type Flight = (ObjectId, Vec<(u32, u32, u32, u32)>, u32);
+
 /// A window's GPU frames.
 #[derive(Debug)]
 pub(crate) struct Presenter {
@@ -62,6 +67,16 @@ pub(crate) struct Presenter {
     /// The compositor's `zwp_linux_dmabuf_v1`, when it offers one and the
     /// device can export.
     dmabuf: Option<(ObjectId, u32)>,
+    /// The layouts a dmabuf may have: what the device draws into and the
+    /// compositor takes, both.
+    modifiers: Vec<u64>,
+    /// The frame callback asked for with the last commit, until it comes.
+    callback: Option<ObjectId>,
+    /// A frame the device is still drawing: its buffer, damage and scale,
+    /// committed once it is drawn ([`Presenter::settle`]).
+    flight: Option<Flight>,
+    /// It came since the window last asked.
+    frame_done: bool,
     /// The buffer scale last committed.
     sent_scale: u32,
     /// How the frames reach the compositor, said once known.
@@ -79,11 +94,23 @@ pub(crate) fn warn(line: &str) {
 
 impl Presenter {
     /// Frames on `gpu` for a window on `client`.
-    pub(crate) fn new(gpu: Gpu, client: &mut Client) -> Self {
+    pub(crate) fn new(gpu: Gpu, client: &mut Client, said: &Feedback) -> Self {
         // `TOLE_GPU_PRESENT=shm` keeps to `wl_shm`, to try that path where
         // the compositor would take a dmabuf.
         let shm_only = std::env::var("TOLE_GPU_PRESENT").is_ok_and(|v| v == "shm");
-        let dmabuf = if gpu.can_export_dmabuf() && !shm_only {
+        let device = gpu.inner.borrow().modifiers.clone();
+        // What the compositor said it takes, of what the device draws
+        // into; a compositor that said nothing takes a linear one.
+        let modifiers: Vec<u64> = if said.modifiers.is_empty() {
+            device.iter().copied().filter(|m| *m == LINEAR).collect()
+        } else {
+            device
+                .iter()
+                .copied()
+                .filter(|m| said.modifiers.contains(m))
+                .collect()
+        };
+        let dmabuf = if gpu.can_export_dmabuf() && !shm_only && !modifiers.is_empty() {
             client.bind(&ZWP_LINUX_DMABUF_V1, 3, None).ok()
         } else {
             None
@@ -93,6 +120,10 @@ impl Presenter {
             slots: Vec::new(),
             scene: None,
             dmabuf,
+            modifiers,
+            callback: None,
+            flight: None,
+            frame_done: false,
             sent_scale: 0,
             how: None,
             deferred: Vec::new(),
@@ -115,6 +146,11 @@ impl Presenter {
 
     /// An event for one of the presenter's objects; whether it was one.
     pub(crate) fn event(&mut self, object: ObjectId, opcode: u16) -> bool {
+        if self.callback == Some(object) {
+            self.callback = None;
+            self.frame_done = true;
+            return true;
+        }
         if let Some(slot) = self.slots.iter_mut().find(|s| s.buffer == object) {
             if opcode == wl_buffer::event::RELEASE {
                 slot.busy = false;
@@ -122,6 +158,11 @@ impl Presenter {
             return true;
         }
         self.dmabuf.is_some_and(|(d, _)| d == object)
+    }
+
+    /// Whether the frame callback came since this was last asked.
+    pub(crate) fn take_frame(&mut self) -> bool {
+        core::mem::take(&mut self.frame_done)
     }
 
     /// Let every buffer go.
@@ -132,6 +173,9 @@ impl Presenter {
     /// Let every buffer go, the device done with them first.
     fn drop_slots(&mut self, client: &mut Client) {
         let mut gpu = self.gpu.inner.borrow_mut();
+        // A frame still drawing into one of them is waited for first.
+        let _ = gpu.wait();
+        self.flight = None;
         for slot in self.slots.drain(..) {
             if slot.shm {
                 client.destroy_buffer(slot.buffer);
@@ -205,7 +249,7 @@ impl Presenter {
         (manager, version): (ObjectId, u32),
         size: (u32, u32),
     ) -> Result<Slot, String> {
-        let target = Target::dmabuf(&mut self.gpu.inner.borrow_mut(), size)?;
+        let target = Target::dmabuf(&mut self.gpu.inner.borrow_mut(), size, &self.modifiers)?;
         let answer = Self::offer(
             client,
             (manager, version),
@@ -237,7 +281,7 @@ impl Presenter {
         (w, h): (u32, u32),
         deferred: &mut Vec<Event>,
     ) -> Result<ObjectId, String> {
-        let Some((fd, stride, offset)) = target.dmabuf_plane() else {
+        let Some((fd, stride, offset, modifier)) = target.dmabuf_plane() else {
             return Err("not a dmabuf".to_owned());
         };
         let made = client.new_object(&ZWP_LINUX_BUFFER_PARAMS_V1, version);
@@ -259,8 +303,8 @@ impl Presenter {
                     Value::Uint(0),
                     Value::Uint(offset),
                     Value::Uint(stride),
-                    Value::Uint(0),
-                    Value::Uint(0),
+                    Value::Uint((modifier >> 32) as u32),
+                    Value::Uint((modifier & 0xffff_ffff) as u32),
                 ],
             )
             .map_err(said)?;
@@ -365,6 +409,9 @@ impl Presenter {
         };
         {
             let mut gpu = self.gpu.inner.borrow_mut();
+            // A frame read back needs its pixels now; any other is left
+            // drawing while the program goes on, and committed once drawn.
+            let wait = matches!(slot.target.kind, Kind::Own);
             super::draw(
                 &mut gpu,
                 &mut ui.text.fonts,
@@ -372,7 +419,7 @@ impl Presenter {
                 (&scene.ops, s as f32),
                 &rects,
                 background,
-                &after,
+                (&after, wait),
             )?;
             if matches!(slot.target.kind, Kind::Own) {
                 let bytes = client
@@ -397,9 +444,40 @@ impl Presenter {
                 }
             }
         }
-        self.commit(client, surface, buffer, s, &damage)?;
         self.scene = Some((scene, s as f32));
+        if self.gpu.inner.borrow().in_flight {
+            self.flight = Some((buffer, damage, s));
+            return Ok(Some(true));
+        }
+        self.commit(client, surface, buffer, s, &damage)?;
         Ok(Some(true))
+    }
+
+    /// Whether a frame is being drawn by the device.
+    pub(crate) fn in_flight(&self) -> bool {
+        self.flight.is_some()
+    }
+
+    /// Commit the frame in flight once the device has drawn it. Answers
+    /// whether it did.
+    ///
+    /// # Errors
+    ///
+    /// The device or the connection failed.
+    pub(crate) fn settle(
+        &mut self,
+        client: &mut Client,
+        surface: SurfaceId,
+    ) -> Result<bool, String> {
+        if self.flight.is_none() || !self.gpu.inner.borrow().done() {
+            return Ok(false);
+        }
+        self.gpu.inner.borrow_mut().wait()?;
+        let Some((buffer, damage, scale)) = self.flight.take() else {
+            return Ok(false);
+        };
+        self.commit(client, surface, buffer, scale, &damage)?;
+        Ok(true)
     }
 
     /// Attach `buffer` to `surface`, damage `damage` of it, ask for a
@@ -417,8 +495,18 @@ impl Presenter {
             .surface_object(surface)
             .ok_or_else(|| "no surface".to_owned())?;
         let version = client.bound_version("wl_compositor").unwrap_or(1);
-        // Asked before the commit, so it rides on it.
-        client.request_frame(surface);
+        // The frame callback asked here, on this commit: the toolkit's own
+        // would commit by itself once its buffers have been shown, and a
+        // commit naming no damage is the whole surface's to a compositor.
+        let callback = client.new_object(&WL_CALLBACK, 1);
+        client
+            .request(
+                object,
+                wl_surface::request::FRAME,
+                &[Value::NewId(callback)],
+            )
+            .map_err(said)?;
+        self.callback = Some(callback);
         let int = |v: u32| Value::Int(i32::try_from(v).unwrap_or(i32::MAX));
         if scale != self.sent_scale && version >= 3 {
             client
@@ -462,6 +550,142 @@ impl Presenter {
             .map_err(said)?;
         client.flush().map_err(said)
     }
+}
+
+/// `DRM_FORMAT_MOD_LINEAR`.
+const LINEAR: u64 = 0;
+
+/// What the compositor says of the dmabufs it takes: its main device, and
+/// the layouts it takes ARGB8888 in.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Feedback {
+    /// Its main device's DRM node: major, minor.
+    pub(crate) main: Option<(u32, u32)>,
+    /// The DRM format modifiers it takes ARGB8888 in.
+    pub(crate) modifiers: Vec<u64>,
+}
+
+/// A `dev_t` as Linux packs it, as its major and minor.
+fn node(dev: u64) -> Option<(u32, u32)> {
+    let major = ((dev >> 8) & 0xfff) | ((dev >> 32) & !0xfff);
+    let minor = (dev & 0xff) | ((dev >> 12) & !0xff);
+    Some((u32::try_from(major).ok()?, u32::try_from(minor).ok()?))
+}
+
+/// Ask the compositor what it takes: `zwp_linux_dmabuf_v1` version 4's
+/// default feedback (its main device and format table), or version 3's
+/// `modifier` events. Answers that, and the events read on the way, which
+/// are the program's. Nothing is asked of a compositor without it.
+pub(crate) fn feedback(client: &mut Client) -> (Feedback, Vec<Event>) {
+    let mut said = Feedback::default();
+    let mut others = Vec::new();
+    let Ok((manager, version)) = client.bind(&ZWP_LINUX_DMABUF_V1, 4, None) else {
+        return (said, others);
+    };
+    let made = (version >= 4).then(|| client.new_object(&ZWP_LINUX_DMABUF_FEEDBACK_V1, version));
+    if let Some(made) = made
+        && client
+            .request(
+                manager,
+                dmabuf::request::GET_DEFAULT_FEEDBACK,
+                &[Value::NewId(made)],
+            )
+            .is_err()
+    {
+        return (said, others);
+    }
+    let mut table: Vec<u8> = Vec::new();
+    let mut indices: Vec<u16> = Vec::new();
+    for _ in 0..4 {
+        let Ok(events) = client.roundtrip() else {
+            break;
+        };
+        let mut done = made.is_none();
+        for event in events {
+            match event {
+                Event::Object {
+                    object,
+                    opcode,
+                    ref args,
+                    ..
+                } if Some(object) == made => match opcode {
+                    feedback::event::FORMAT_TABLE => {
+                        if let Some(Value::Fd(fd)) = args.first() {
+                            use std::io::Read as _;
+                            use std::os::fd::FromRawFd as _;
+                            // SAFETY: the descriptor came with this event and
+                            // nothing else holds it; the file owns it.
+                            let mut file = unsafe { std::fs::File::from_raw_fd(*fd) };
+                            let _ = file.read_to_end(&mut table);
+                        }
+                    }
+                    feedback::event::MAIN_DEVICE => {
+                        if let Some(Value::Array(bytes)) = args.first()
+                            && let Some(dev) = bytes.get(..8).and_then(|b| b.try_into().ok())
+                        {
+                            said.main = node(u64::from_ne_bytes(dev));
+                        }
+                    }
+                    feedback::event::TRANCHE_FORMATS => {
+                        if let Some(Value::Array(bytes)) = args.first() {
+                            indices.extend(
+                                bytes
+                                    .chunks_exact(2)
+                                    .filter_map(|b| b.try_into().ok())
+                                    .map(u16::from_ne_bytes),
+                            );
+                        }
+                    }
+                    feedback::event::DONE => done = true,
+                    _ => {}
+                },
+                Event::Object {
+                    object,
+                    opcode,
+                    ref args,
+                    ..
+                } if object == manager => {
+                    if opcode == dmabuf::event::MODIFIER
+                        && let [Value::Uint(format), Value::Uint(high), Value::Uint(low)] =
+                            args.as_slice()
+                        && *format == DRM_ARGB8888
+                    {
+                        said.modifiers
+                            .push((u64::from(*high) << 32) | u64::from(*low));
+                    }
+                }
+                other => others.push(other),
+            }
+        }
+        if done {
+            break;
+        }
+    }
+    // Each table entry: a u32 format, four bytes of padding, a u64
+    // modifier, in the machine's order.
+    for index in indices {
+        let at = usize::from(index) * 16;
+        let (Some(format), Some(modifier)) = (
+            table
+                .get(at..at + 4)
+                .and_then(|b| b.try_into().ok())
+                .map(u32::from_ne_bytes),
+            table
+                .get(at + 8..at + 16)
+                .and_then(|b| b.try_into().ok())
+                .map(u64::from_ne_bytes),
+        ) else {
+            continue;
+        };
+        if format == DRM_ARGB8888 && !said.modifiers.contains(&modifier) {
+            said.modifiers.push(modifier);
+        }
+    }
+    if let Some(made) = made {
+        let _ = client.request(made, feedback::request::DESTROY, &[]);
+    }
+    let _ = client.request(manager, dmabuf::request::DESTROY, &[]);
+    (said, others)
 }
 
 /// Pixel rectangles merged as the damage is: touching ones joined, and

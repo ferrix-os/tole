@@ -87,6 +87,10 @@ pub(crate) struct Gpu {
     /// `VK_KHR_external_memory_fd`, when it also has dmabufs and DRM
     /// format modifiers.
     pub(crate) dmabuf: Option<ash::khr::external_memory_fd::Device>,
+    /// The single-plane modifiers it draws [`FORMAT`] into.
+    pub(crate) modifiers: Vec<u64>,
+    /// `VK_EXT_image_drm_format_modifier`'s calls, with dmabufs.
+    pub(crate) drm_modifier: Option<ash::ext::image_drm_format_modifier::Device>,
     /// The command pool.
     pool: vk::CommandPool,
     /// The one command buffer: one frame is in flight at a time.
@@ -119,6 +123,8 @@ pub(crate) struct Gpu {
     pub(crate) layers: Vec<Texture>,
     /// Frames drawn.
     pub(crate) frame: u64,
+    /// A submission is running that nothing has waited for yet.
+    pub(crate) in_flight: bool,
 }
 
 impl std::fmt::Debug for Gpu {
@@ -152,21 +158,84 @@ fn rank(kind: vk::PhysicalDeviceType) -> u32 {
     }
 }
 
-impl Gpu {
-    /// Load Vulkan and make the device ([`super::Gpu::new`]).
-    pub(crate) fn new(hardware_only: bool) -> Result<Gpu, String> {
-        Self::filtered(hardware_only, std::env::var("TOLE_GPU_DEVICE").ok())
-    }
+/// A DRM device number's major and minor: a render or primary node.
+pub(crate) type Node = (u32, u32);
 
-    /// [`Gpu::new`] in a static program, which cannot load Vulkan.
+/// The device itself: made where making it may take long -- a driver's
+/// first start, NVIDIA's over a second -- on a thread of its own, then
+/// given to the [`Gpu`] that draws with it. Every field is a Vulkan
+/// handle or a plain value, so it crosses threads.
+pub(crate) struct Core {
+    /// The loader.
+    entry: ash::Entry,
+    /// The instance.
+    instance: ash::Instance,
+    /// The logical device.
+    device: ash::Device,
+    /// Its graphics queue.
+    queue: vk::Queue,
+    /// That queue's family.
+    family: u32,
+    /// The device's name.
+    pub(crate) name: String,
+    /// Whether it draws on the processor.
+    software: bool,
+    /// Its memory types.
+    memory: vk::PhysicalDeviceMemoryProperties,
+    /// `VK_EXT_external_memory_host`, when it has it.
+    host_import: Option<ash::ext::external_memory_host::Device>,
+    /// The alignment an imported pointer and size need.
+    host_align: u64,
+    /// `VK_KHR_external_memory_fd`, when it also has dmabufs and DRM
+    /// format modifiers.
+    dmabuf: Option<ash::khr::external_memory_fd::Device>,
+    /// The single-plane modifiers it draws [`FORMAT`] into.
+    modifiers: Vec<u64>,
+    /// Whether a [`Gpu`] took it; else dropping it destroys it.
+    taken: bool,
+}
+
+impl std::fmt::Debug for Core {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Core")
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for Core {
+    fn drop(&mut self) {
+        if self.taken {
+            return;
+        }
+        // SAFETY: nothing was made from the device; it is idle.
+        unsafe { self.device.destroy_device(None) };
+        // SAFETY: the device made from it is gone.
+        unsafe { self.instance.destroy_instance(None) };
+    }
+}
+
+impl Core {
+    /// Load Vulkan and make a device: on the compositor's own when `near`
+    /// names its node and a device sits there, else a discrete GPU, then
+    /// an integrated one, then any; the one whose name holds `wanted` when
+    /// given. `hardware_only` refuses a CPU device.
     #[cfg(target_env = "musl")]
-    pub(crate) fn filtered(_hardware_only: bool, _wanted: Option<String>) -> Result<Gpu, String> {
+    pub(crate) fn new(
+        _hardware_only: bool,
+        _wanted: Option<String>,
+        _near: Option<Node>,
+    ) -> Result<Core, String> {
         Err("no Vulkan library: a static program cannot load one".to_owned())
     }
 
-    /// [`Gpu::new`] on the device whose name holds `wanted`, when given.
+    /// As above.
     #[cfg(not(target_env = "musl"))]
-    pub(crate) fn filtered(hardware_only: bool, wanted: Option<String>) -> Result<Gpu, String> {
+    pub(crate) fn new(
+        hardware_only: bool,
+        wanted: Option<String>,
+        near: Option<Node>,
+    ) -> Result<Core, String> {
         // SAFETY: loading the system's Vulkan loader runs its initialisers;
         // it is the library every Vulkan program loads, and nothing of it
         // is used after the entry is dropped, which is last.
@@ -188,8 +257,8 @@ impl Gpu {
                 said("vkCreateInstance", e)
             }
         })?;
-        match Self::with_instance(entry, instance.clone(), hardware_only, wanted) {
-            Ok(gpu) => Ok(gpu),
+        match Self::with_instance(entry, instance.clone(), hardware_only, wanted, near) {
+            Ok(core) => Ok(core),
             Err(error) => {
                 // SAFETY: nothing was made from the instance that still
                 // lives; `with_instance` destroyed what it made.
@@ -199,13 +268,75 @@ impl Gpu {
         }
     }
 
-    /// The rest of [`Gpu::new`], once there is an instance.
+    /// The DRM nodes `physical` sits on, primary and render, when the
+    /// device says (`VK_EXT_physical_device_drm`).
+    fn nodes(
+        instance: &ash::Instance,
+        physical: vk::PhysicalDevice,
+        extensions: &[vk::ExtensionProperties],
+    ) -> Vec<Node> {
+        if !has(extensions, ash::ext::physical_device_drm::NAME) {
+            return Vec::new();
+        }
+        let mut drm = vk::PhysicalDeviceDrmPropertiesEXT::default();
+        let mut all = vk::PhysicalDeviceProperties2::default().push_next(&mut drm);
+        // SAFETY: `all` and its chain live across the call, and the device
+        // lists the extension whose structure is chained.
+        unsafe { instance.get_physical_device_properties2(physical, &mut all) };
+        let mut nodes = Vec::new();
+        let node =
+            |major: i64, minor: i64| Some((u32::try_from(major).ok()?, u32::try_from(minor).ok()?));
+        if drm.has_primary == vk::TRUE
+            && let Some(node) = node(drm.primary_major, drm.primary_minor)
+        {
+            nodes.push(node);
+        }
+        if drm.has_render == vk::TRUE
+            && let Some(node) = node(drm.render_major, drm.render_minor)
+        {
+            nodes.push(node);
+        }
+        nodes
+    }
+
+    /// The single-plane DRM format modifiers `physical` draws [`FORMAT`]
+    /// into.
+    fn modifiers(instance: &ash::Instance, physical: vk::PhysicalDevice) -> Vec<u64> {
+        let mut list = vk::DrmFormatModifierPropertiesListEXT::default();
+        let mut props = vk::FormatProperties2::default().push_next(&mut list);
+        // SAFETY: a count query: no array is chained yet.
+        unsafe {
+            instance.get_physical_device_format_properties2(physical, FORMAT, &mut props);
+        }
+        let count = usize::try_from(list.drm_format_modifier_count).unwrap_or(0);
+        let mut found = vec![vk::DrmFormatModifierPropertiesEXT::default(); count];
+        let mut list = vk::DrmFormatModifierPropertiesListEXT::default()
+            .drm_format_modifier_properties(&mut found);
+        let mut props = vk::FormatProperties2::default().push_next(&mut list);
+        // SAFETY: the array chained holds the count the first call gave.
+        unsafe {
+            instance.get_physical_device_format_properties2(physical, FORMAT, &mut props);
+        }
+        found
+            .iter()
+            .filter(|each| {
+                each.drm_format_modifier_plane_count == 1
+                    && each
+                        .drm_format_modifier_tiling_features
+                        .contains(vk::FormatFeatureFlags::COLOR_ATTACHMENT)
+            })
+            .map(|each| each.drm_format_modifier)
+            .collect()
+    }
+
+    /// The rest of [`Core::new`], once there is an instance.
     fn with_instance(
         entry: ash::Entry,
         instance: ash::Instance,
         hardware_only: bool,
         wanted: Option<String>,
-    ) -> Result<Gpu, String> {
+        near: Option<Node>,
+    ) -> Result<Core, String> {
         // SAFETY: the instance is valid.
         let devices = unsafe { instance.enumerate_physical_devices() }
             .map_err(|e| said("vkEnumeratePhysicalDevices", e))?;
@@ -228,7 +359,19 @@ impl Gpu {
             {
                 continue;
             }
-            found.push((rank(props.device_type), physical, name, props.device_type));
+            // SAFETY: `physical` came from this instance.
+            let extensions = unsafe { instance.enumerate_device_extension_properties(physical) }
+                .unwrap_or_default();
+            // The compositor's own device first: its dmabufs are the ones
+            // it takes without a copy between devices.
+            let on_it = near
+                .is_some_and(|near| Self::nodes(&instance, physical, &extensions).contains(&near));
+            let rank = if on_it {
+                0
+            } else {
+                1 + rank(props.device_type)
+            };
+            found.push((rank, physical, name, props.device_type));
         }
         found.sort_by_key(|(rank, ..)| *rank);
         let Some((_, physical, name, kind)) = found.into_iter().next() else {
@@ -293,24 +436,61 @@ impl Gpu {
             host_align = props.min_imported_host_pointer_alignment.max(1);
             ash::ext::external_memory_host::Device::new(&instance, &device)
         });
+        let modifiers = if dmabuf {
+            Self::modifiers(&instance, physical)
+        } else {
+            Vec::new()
+        };
         let dmabuf = dmabuf.then(|| ash::khr::external_memory_fd::Device::new(&instance, &device));
-        let mut parts = Parts::new(&device, family)
-            .map_err(|error| format!("{name}: {error}"))
-            .inspect_err(|_| {
-                // SAFETY: nothing made from the device lives; `Parts::new`
-                // destroyed what it made.
-                unsafe { device.destroy_device(None) };
-            })?;
-        let mut gpu = Gpu {
-            _entry: entry,
+        Ok(Core {
+            entry,
             instance,
+            device,
             queue,
+            family,
             name,
             software: kind == vk::PhysicalDeviceType::CPU,
             memory,
             host_import,
             host_align,
             dmabuf,
+            modifiers,
+            taken: false,
+        })
+    }
+}
+
+impl Gpu {
+    /// Load Vulkan and make the device ([`super::Gpu::new`]).
+    pub(crate) fn new(hardware_only: bool) -> Result<Gpu, String> {
+        Self::filtered(hardware_only, std::env::var("TOLE_GPU_DEVICE").ok())
+    }
+
+    /// [`Gpu::new`] on the device whose name holds `wanted`, when given.
+    pub(crate) fn filtered(hardware_only: bool, wanted: Option<String>) -> Result<Gpu, String> {
+        Self::from_core(Core::new(hardware_only, wanted, None)?)
+    }
+
+    /// The pipeline, the atlas and the rest, on `core`'s device.
+    pub(crate) fn from_core(mut core: Core) -> Result<Gpu, String> {
+        let parts = Parts::new(&core.device, core.family)
+            .map_err(|error| format!("{}: {error}", core.name))?;
+        core.taken = true;
+        let mut parts = parts;
+        let mut gpu = Gpu {
+            _entry: core.entry.clone(),
+            instance: core.instance.clone(),
+            queue: core.queue,
+            name: core.name.clone(),
+            software: core.software,
+            memory: core.memory,
+            host_import: core.host_import.clone(),
+            host_align: core.host_align,
+            dmabuf: core.dmabuf.clone(),
+            modifiers: core.modifiers.clone(),
+            drm_modifier: core.dmabuf.is_some().then(|| {
+                ash::ext::image_drm_format_modifier::Device::new(&core.instance, &core.device)
+            }),
             pool: parts.pool,
             cmd: parts.cmd,
             fence: parts.fence,
@@ -336,7 +516,8 @@ impl Gpu {
             textures: HashMap::new(),
             layers: Vec::new(),
             frame: 0,
-            device,
+            in_flight: false,
+            device: core.device.clone(),
         };
         parts.forget();
         gpu.atlas_texture = gpu.texture(
@@ -603,10 +784,12 @@ impl Gpu {
         Ok(())
     }
 
-    /// Start recording the command buffer.
-    pub(crate) fn begin(&self) -> Result<(), String> {
+    /// Start recording the command buffer, once the last submission has
+    /// run.
+    pub(crate) fn begin(&mut self) -> Result<(), String> {
+        self.wait()?;
         // SAFETY: the buffer is not pending: the last submission was
-        // waited for.
+        // waited for just now.
         unsafe {
             self.device
                 .reset_command_buffer(self.cmd, vk::CommandBufferResetFlags::empty())
@@ -619,8 +802,9 @@ impl Gpu {
             .map_err(|e| said("vkBeginCommandBuffer", e))
     }
 
-    /// End the command buffer, submit it and wait until it has run.
-    pub(crate) fn submit_and_wait(&self) -> Result<(), String> {
+    /// End the command buffer and submit it; it runs while the program goes
+    /// on, until [`Gpu::wait`].
+    pub(crate) fn submit(&mut self) -> Result<(), String> {
         // SAFETY: the buffer is recording.
         unsafe { self.device.end_command_buffer(self.cmd) }
             .map_err(|e| said("vkEndCommandBuffer", e))?;
@@ -629,14 +813,36 @@ impl Gpu {
         // SAFETY: the fence is unsignalled (reset after each wait).
         unsafe { self.device.queue_submit(self.queue, &submit, self.fence) }
             .map_err(|e| said("vkQueueSubmit", e))?;
-        // SAFETY: the fence was just submitted with the buffer.
+        self.in_flight = true;
+        Ok(())
+    }
+
+    /// Whether the submission in flight has run (or there is none).
+    pub(crate) fn done(&self) -> bool {
+        // SAFETY: the fence is this device's.
+        !self.in_flight || unsafe { self.device.get_fence_status(self.fence) }.unwrap_or(true)
+    }
+
+    /// Wait until the submission in flight, if any, has run.
+    pub(crate) fn wait(&mut self) -> Result<(), String> {
+        if !self.in_flight {
+            return Ok(());
+        }
+        // SAFETY: the fence was submitted with the buffer.
         unsafe {
             self.device
                 .wait_for_fences(&[self.fence], true, 10_000_000_000)
         }
         .map_err(|e| said("vkWaitForFences", e))?;
+        self.in_flight = false;
         // SAFETY: the fence is signalled and no submission names it.
         unsafe { self.device.reset_fences(&[self.fence]) }.map_err(|e| said("vkResetFences", e))
+    }
+
+    /// End the command buffer, submit it and wait until it has run.
+    pub(crate) fn submit_and_wait(&mut self) -> Result<(), String> {
+        self.submit()?;
+        self.wait()
     }
 
     /// Let go of the pictures not drawn in the last `frames` frames.

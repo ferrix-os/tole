@@ -33,6 +33,8 @@ pub(crate) enum Kind {
         stride: u32,
         /// Where the first row is.
         offset: u32,
+        /// The DRM format modifier the driver laid it out by.
+        modifier: u64,
     },
 }
 
@@ -190,15 +192,23 @@ impl Target {
         })
     }
 
-    /// A linear image the device exports as a dmabuf, `size` pixels.
-    pub(crate) fn dmabuf(gpu: &mut Gpu, size: (u32, u32)) -> Result<Target, String> {
-        let Some(fd_ext) = gpu.dmabuf.clone() else {
+    /// An image the device exports as a dmabuf, `size` pixels, laid out
+    /// by one of `modifiers` -- what both the device and the compositor
+    /// take; the driver chooses which.
+    pub(crate) fn dmabuf(
+        gpu: &mut Gpu,
+        size: (u32, u32),
+        modifiers: &[u64],
+    ) -> Result<Target, String> {
+        let (Some(fd_ext), Some(drm)) = (gpu.dmabuf.clone(), gpu.drm_modifier.clone()) else {
             return Err("no dmabuf export".to_owned());
         };
+        if modifiers.is_empty() {
+            return Err("no layout both the device and the compositor take".to_owned());
+        }
         let ty = vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT;
-        let modifiers = [0u64];
         let mut list =
-            vk::ImageDrmFormatModifierListCreateInfoEXT::default().drm_format_modifiers(&modifiers);
+            vk::ImageDrmFormatModifierListCreateInfoEXT::default().drm_format_modifiers(modifiers);
         let mut external = vk::ExternalMemoryImageCreateInfo::default().handle_types(ty);
         let info = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
@@ -266,6 +276,14 @@ impl Target {
         };
         // SAFETY: a DRM-modifier image's plane 0, which it has.
         let layout = unsafe { gpu.device.get_image_subresource_layout(image, plane) };
+        let mut chosen = vk::ImageDrmFormatModifierPropertiesEXT::default();
+        // SAFETY: an image made with a modifier list, bound to its memory.
+        if let Err(e) = unsafe { drm.get_image_drm_format_modifier_properties(image, &mut chosen) }
+        {
+            gpu.destroy_texture(texture);
+            return Err(device::said("vkGetImageDrmFormatModifierPropertiesEXT", e));
+        }
+        let modifier = chosen.drm_format_modifier;
         let get = vk::MemoryGetFdInfoKHR::default()
             .memory(memory)
             .handle_type(ty);
@@ -296,15 +314,26 @@ impl Target {
         };
         Ok(Target {
             texture,
-            kind: Kind::Dmabuf { fd, stride, offset },
+            kind: Kind::Dmabuf {
+                fd,
+                stride,
+                offset,
+                modifier,
+            },
         })
     }
 
-    /// The dmabuf's descriptor, stride and offset, for a `Dmabuf` target.
-    pub(crate) fn dmabuf_plane(&self) -> Option<(i32, u32, u32)> {
+    /// The dmabuf's descriptor, stride, offset and modifier, for a
+    /// `Dmabuf` target.
+    pub(crate) fn dmabuf_plane(&self) -> Option<(i32, u32, u32, u64)> {
         use std::os::fd::AsRawFd as _;
         match &self.kind {
-            Kind::Dmabuf { fd, stride, offset } => Some((fd.as_raw_fd(), *stride, *offset)),
+            Kind::Dmabuf {
+                fd,
+                stride,
+                offset,
+                modifier,
+            } => Some((fd.as_raw_fd(), *stride, *offset, *modifier)),
             _ => None,
         }
     }

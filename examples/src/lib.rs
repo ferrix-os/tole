@@ -616,6 +616,7 @@ pub fn run_window(demo: &Demo) -> Result<(), String> {
         tole::window::Window::open(root, options).map_err(|error| error.to_string())?;
     let mut up = false;
     let mut said = String::new();
+    let mut drawn_by = String::new();
     while !window.is_closed() {
         let _ = window
             .dispatch(&mut ui, None)
@@ -643,6 +644,16 @@ pub fn run_window(demo: &Demo) -> Result<(), String> {
                 demo.name,
                 window.renderer()
             );
+            let _ = out.flush();
+            drawn_by = window.renderer();
+        }
+        // The GPU is made on a thread while the first frames are drawn on
+        // the CPU: said again when what draws changes.
+        if up && window.renderer() != drawn_by {
+            use std::io::Write as _;
+            drawn_by = window.renderer();
+            let mut out = std::io::stdout();
+            let _ = writeln!(out, "tole-examples: {} now drawn by {drawn_by}", demo.name);
             let _ = out.flush();
         }
     }

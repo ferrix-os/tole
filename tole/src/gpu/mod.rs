@@ -147,6 +147,65 @@ impl Gpu {
     }
 }
 
+/// A device being made on a thread of its own (a driver's first start can
+/// take over a second), while the window draws on the CPU.
+#[derive(Debug)]
+pub struct Pending {
+    /// The thread making it.
+    thread: Option<std::thread::JoinHandle<Result<device::Core, String>>>,
+}
+
+impl Gpu {
+    /// Start making a device on a thread, as [`Gpu::new`] would make it,
+    /// preferring the one on DRM node `near` (the compositor's own) when
+    /// it names one; `wake` is called once it is made or refused.
+    #[must_use]
+    pub fn start(
+        hardware_only: bool,
+        near: Option<(u32, u32)>,
+        wake: Box<dyn FnOnce() + Send>,
+    ) -> Pending {
+        let wanted = std::env::var("TOLE_GPU_DEVICE").ok();
+        let thread = std::thread::Builder::new()
+            .name("tole-gpu".to_owned())
+            .spawn(move || {
+                let made = device::Core::new(hardware_only, wanted, near);
+                wake();
+                made
+            })
+            .ok();
+        Pending { thread }
+    }
+}
+
+impl Pending {
+    /// Whether the thread is done.
+    #[must_use]
+    pub fn ready(&self) -> bool {
+        self.thread
+            .as_ref()
+            .is_none_or(std::thread::JoinHandle::is_finished)
+    }
+
+    /// The device, finished on this thread, or why there is none.
+    ///
+    /// # Errors
+    ///
+    /// The device could not be made.
+    pub fn finish(mut self) -> Result<Gpu, String> {
+        let thread = self
+            .thread
+            .take()
+            .ok_or_else(|| "no thread to make the device".to_owned())?;
+        let core = thread
+            .join()
+            .map_err(|_| "the thread making the device failed".to_owned())??;
+        device::Gpu::from_core(core).map(|inner| Gpu {
+            inner: Rc::new(RefCell::new(inner)),
+        })
+    }
+}
+
 /// A frame kept on the GPU between draws, so only what changed is drawn
 /// again ([`Ui::render_into_gpu`]): the GPU's [`crate::Frame`].
 pub struct GpuFrame {
@@ -289,7 +348,7 @@ pub(crate) fn copy_read_back(
 
 /// Draw `ops` into `target` in the parts `rects` (buffer pixels; the
 /// whole target when empty), each cleared to `background` first, then do
-/// `after`.
+/// `after`; wait for the device when `wait`, else leave it running.
 pub(crate) fn draw(
     gpu: &mut device::Gpu,
     fonts: &mut Fonts,
@@ -297,7 +356,7 @@ pub(crate) fn draw(
     (ops, scale): (&[crate::DrawOp], f32),
     rects: &[(u32, u32, u32, u32)],
     background: Color,
-    after: &frame::After,
+    (after, wait): (&frame::After, bool),
 ) -> Result<(), String> {
     let (w, h) = target.size();
     let whole = [(0, 0, w, h)];
@@ -309,7 +368,11 @@ pub(crate) fn draw(
         let logical = Rect::new(x as f32 / s, y as f32 / s, rw as f32 / s, rh as f32 / s);
         crate::damage::play_culled(ops, &mut renderer, logical, s);
     }
-    renderer.finish(after)
+    if wait {
+        renderer.finish(after)
+    } else {
+        renderer.finish_in_flight(after)
+    }
 }
 
 impl crate::Ui {
@@ -366,7 +429,7 @@ impl crate::Ui {
             (&scene.ops, frame.scale),
             &pixels,
             frame.background,
-            &frame::After::Copy(pixels.clone()),
+            (&frame::After::Copy(pixels.clone()), true),
         )?;
         drop(gpu);
         frame.scene = Some(scene);
