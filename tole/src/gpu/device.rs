@@ -178,8 +178,16 @@ impl Gpu {
             .api_version(vk::API_VERSION_1_3);
         let info = vk::InstanceCreateInfo::default().application_info(&app);
         // SAFETY: `info` and what it points to live across the call.
-        let instance = unsafe { entry.create_instance(&info, None) }
-            .map_err(|e| said("vkCreateInstance", e))?;
+        // A loader with no driver behind it refuses the instance with
+        // ERROR_INCOMPATIBLE_DRIVER: a machine without Vulkan as much as
+        // one without the library, and said as such for the fallback.
+        let instance = unsafe { entry.create_instance(&info, None) }.map_err(|e| {
+            if e == vk::Result::ERROR_INCOMPATIBLE_DRIVER {
+                format!("no Vulkan driver: {}", said("vkCreateInstance", e))
+            } else {
+                said("vkCreateInstance", e)
+            }
+        })?;
         match Self::with_instance(entry, instance.clone(), hardware_only, wanted) {
             Ok(gpu) => Ok(gpu),
             Err(error) => {
