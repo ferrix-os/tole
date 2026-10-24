@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.svg" width="128" alt="tole"></p>
+
 # tole
 
 Ferrix's UI framework, after Qt Quick and QML: a retained tree of items
