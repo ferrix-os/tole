@@ -97,6 +97,54 @@ pub(crate) const MODULES: &[(&str, &str, &[Source])] = &[
                 include_str!("../modules/Fx/Controls/FileIcon.tole"),
             ),
             (
+                "CloseButton.tole",
+                include_str!("../modules/Fx/Controls/CloseButton.tole"),
+            ),
+            (
+                "UpButton.tole",
+                include_str!("../modules/Fx/Controls/UpButton.tole"),
+            ),
+            (
+                "ViewSwitch.tole",
+                include_str!("../modules/Fx/Controls/ViewSwitch.tole"),
+            ),
+            (
+                "SegmentedBar.tole",
+                include_str!("../modules/Fx/Controls/SegmentedBar.tole"),
+            ),
+            (
+                "SearchField.tole",
+                include_str!("../modules/Fx/Controls/SearchField.tole"),
+            ),
+            (
+                "Breadcrumbs.tole",
+                include_str!("../modules/Fx/Controls/Breadcrumbs.tole"),
+            ),
+            (
+                "PlaceRow.tole",
+                include_str!("../modules/Fx/Controls/PlaceRow.tole"),
+            ),
+            (
+                "PlacesList.tole",
+                include_str!("../modules/Fx/Controls/PlacesList.tole"),
+            ),
+            (
+                "FileListRow.tole",
+                include_str!("../modules/Fx/Controls/FileListRow.tole"),
+            ),
+            (
+                "FileTile.tole",
+                include_str!("../modules/Fx/Controls/FileTile.tole"),
+            ),
+            (
+                "FilePreview.tole",
+                include_str!("../modules/Fx/Controls/FilePreview.tole"),
+            ),
+            (
+                "PatternHelp.tole",
+                include_str!("../modules/Fx/Controls/PatternHelp.tole"),
+            ),
+            (
                 "FileDialog.tole",
                 include_str!("../modules/Fx/Controls/FileDialog.tole"),
             ),

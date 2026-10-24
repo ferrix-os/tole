@@ -1,0 +1,66 @@
+// One file as a row of a list: its picture or its badge, its name, and
+// whatever columns a use puts in it (its children, placed from the
+// row's left). Tinted while `selected`; `clicked()` and
+// `doubleClicked()` say what the pointer did. The name is `nameWidth`
+// wide, elided past it; one that should end where its text does (for a
+// mark drawn after it, at `nameEnd`) takes
+// `min(nameImplicitWidth, ...)`.
+import Fx
+
+component FileListRow : Rectangle {
+    id: row
+    property string name
+    property string kind
+    property string badge
+    // A picture's path, shown in place of the badge; "" for none.
+    property string image
+    property bool isDir: false
+    property bool selected: false
+    property real nameWidth: width - 54
+    property color nameColor: Theme.ink
+    property real nameImplicitWidth: label.implicitWidth
+    property real nameEnd: 44 + label.width
+    default property alias content: columns
+    signal clicked()
+    signal doubleClicked()
+
+    height: 34
+    radius: 7
+    color: selected ? Theme.accentOver : area.containsMouse ? Theme.hover : "transparent"
+
+    FileIcon {
+        x: 10; y: (row.height - 18) / 2
+        visible: row.image == ""
+        kind: row.kind
+        text: row.badge
+    }
+    Image {
+        x: 10; y: (row.height - 18) / 2
+        width: 24; height: 18
+        visible: row.image != ""
+        source: row.image
+        fillMode: Image.PreserveAspectCrop
+    }
+    Text {
+        id: label
+        x: 44
+        width: row.nameWidth
+        height: row.height
+        elide: Text.ElideRight
+        text: row.name
+        font: Theme.sans(13, row.isDir ? 500 : 400)
+        color: row.nameColor
+    }
+    Item {
+        id: columns
+        width: row.width
+        height: row.height
+    }
+    MouseArea {
+        id: area
+        anchors.fill: parent
+        hoverEnabled: true
+        onClicked: row.clicked()
+        onDoubleClicked: row.doubleClicked()
+    }
+}

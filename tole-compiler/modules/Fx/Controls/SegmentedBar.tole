@@ -1,0 +1,48 @@
+// One of a few choices, side by side in a box, the one chosen tinted: a
+// file chooser's filter by type. An empty name leaves its choice out
+// (its index stays). `current` is the one chosen and is never set from
+// inside: a press says `picked(choice)`.
+import Fx
+
+component SegmentedBar : Rectangle {
+    id: bar
+    property list<string> options
+    property int current: 0
+    signal picked(int choice)
+
+    width: choices.implicitWidth + 8
+    height: 34
+    radius: 8
+    color: Theme.bg2
+    border.width: 1
+    border.color: Theme.line
+
+    Row {
+        id: choices
+        x: 4; y: 4
+        spacing: 2
+        Repeater {
+            model: bar.options
+            delegate: Rectangle {
+                visible: modelData != ""
+                width: label.implicitWidth + 20
+                height: bar.height - 8
+                radius: 6
+                color: bar.current == index ? Theme.accentBg : area.containsMouse ? Theme.hover : "transparent"
+                Text {
+                    id: label
+                    anchors.centerIn: parent
+                    text: modelData
+                    font: Theme.sans(12, bar.current == index ? 500 : 400)
+                    color: bar.current == index ? Theme.accent : Theme.ink3
+                }
+                MouseArea {
+                    id: area
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: bar.picked(index)
+                }
+            }
+        }
+    }
+}

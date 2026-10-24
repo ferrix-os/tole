@@ -1,0 +1,32 @@
+// The cross at the corner of a dialog: `clicked()` when pressed.
+import Fx
+
+component CloseButton : Rectangle {
+    id: button
+    signal clicked()
+
+    width: 32; height: 32
+    radius: 8
+    color: area.containsMouse ? Theme.hover : "transparent"
+
+    Shape {
+        ShapePath {
+            strokeColor: area.containsMouse ? Theme.ink : Theme.ink4
+            strokeWidth: 1.6
+            startX: 11; startY: 11
+            PathLine { x: 21; y: 21 }
+        }
+        ShapePath {
+            strokeColor: area.containsMouse ? Theme.ink : Theme.ink4
+            strokeWidth: 1.6
+            startX: 21; startY: 11
+            PathLine { x: 11; y: 21 }
+        }
+    }
+    MouseArea {
+        id: area
+        anchors.fill: parent
+        hoverEnabled: true
+        onClicked: button.clicked()
+    }
+}

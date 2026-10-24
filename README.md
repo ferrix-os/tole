@@ -580,7 +580,8 @@ component Transitions : Rectangle {
 `import Fx.Controls` brings the framework's controls: `Button`,
 `CheckBox`, `RadioButton`, `Switch`, `Label`, `ProgressBar`, `TabBar`,
 `GroupBox`, `TextField`, `TextArea`, `ComboBox`, `Menu` with `MenuItem`
-and `MenuSeparator`, `ScrollBar`, `FileIcon` and `FileDialog`, each a `.tole` file
+and `MenuSeparator`, `ScrollBar`, `FileIcon`, `FileDialog` and the file
+controls it is made of (below), each a `.tole` file
 inside the compiler, written on the primitives as Qt Quick Controls are
 in QML. There is one style;
 every colour, radius and face in it is a token of the `Theme`
@@ -870,6 +871,32 @@ It is built in markup on three things a file manager uses too:
   `PreserveAspectCrop`, decoded once at the pixels it covers and kept.
 
 `FileIcon` is the three-letter badge of a kind, in its colour.
+
+`FileDialog` itself is a composition of controls a file manager uses
+too -- shelf, the file manager in the apps, draws its search, its
+breadcrumbs, its sidebar's rows, its list and grid and its preview with
+the same ones. Each draws and says what was pressed; none changes what
+it shows by itself, so the owner (a `FolderListModel`, or a program's
+own state) stays the one truth:
+
+* **`SearchField`**: the search in its three modes, the button and
+  menu picking one (`modePicked(picked)`), red with an `error`.
+* **`Breadcrumbs`**: `crumbs` (a `FolderListModel`'s, or a program's
+  own with `FileEntry::named`), the `current` one stronger;
+  `crumbClicked(index, to)`.
+* **`PlacesList`** of **`PlaceRow`**s: a title over the places, the
+  one it is in tinted; a row takes a mark before its name (an icon, a
+  tag's dot) and a `detail` at its end.
+* **`FileListRow`** and **`FileTile`**: a file as a list's row (its
+  picture or badge and its name; a use's children are its columns) and
+  as a grid's tile; `clicked()` and `doubleClicked()`.
+* **`FilePreview`**: the line beside the files, a file's badge, name and
+  kind, then its picture or the start of its text; what goes under is
+  the use's, from `bodyBottom` down.
+* **`PatternHelp`**: why a search or a pattern cannot be read, over
+  how to write one.
+* **`ViewSwitch`** (list or grid), **`UpButton`**, **`CloseButton`**
+  and **`SegmentedBar`** (one of a few choices, the filter by type).
 
 ### Charts and shapes
 

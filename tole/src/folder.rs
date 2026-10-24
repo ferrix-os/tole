@@ -55,6 +55,20 @@ pub struct FileEntry {
     pub(crate) file_kind: Option<FileKind>,
 }
 
+impl FileEntry {
+    /// An entry that is only a name and a path, for a program that lists
+    /// places itself: a `Breadcrumbs` crumb that is not a folder read
+    /// from the disk (a folder inside an archive, a tag).
+    #[must_use]
+    pub fn named(name: &str, path: &str) -> Self {
+        FileEntry {
+            name: name.into(),
+            path: path.into(),
+            ..FileEntry::default()
+        }
+    }
+}
+
 impl PropType for FileEntry {
     fn into_value(self) -> Value {
         Value::custom(self)

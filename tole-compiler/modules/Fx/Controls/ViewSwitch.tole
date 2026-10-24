@@ -1,0 +1,59 @@
+// A list or a grid: two buttons side by side, the one shown tinted.
+// `grid` is what is shown and is never set from inside: a press says
+// `gridPicked(on)`.
+import Fx
+
+component ViewSwitch : Rectangle {
+    id: views
+    property bool grid: false
+    signal gridPicked(bool on)
+
+    width: 70; height: 38
+    radius: 8
+    color: Theme.bg2
+    border.width: 1
+    border.color: Theme.line
+
+    Rectangle {
+        x: 3; y: 3
+        width: 31; height: 32
+        radius: 6
+        color: !views.grid ? Theme.accentBg : listArea.containsMouse ? Theme.hover : "transparent"
+        Shape {
+            x: 8; y: 8
+            ShapePath { fillColor: !views.grid ? Theme.accent : Theme.ink4; strokeWidth: 0; startX: 1; startY: 3; PathLine { x: 3; y: 3 } PathLine { x: 3; y: 5 } PathLine { x: 1; y: 5 } closed: true }
+            ShapePath { fillColor: !views.grid ? Theme.accent : Theme.ink4; strokeWidth: 0; startX: 5; startY: 3; PathLine { x: 14; y: 3 } PathLine { x: 14; y: 5 } PathLine { x: 5; y: 5 } closed: true }
+            ShapePath { fillColor: !views.grid ? Theme.accent : Theme.ink4; strokeWidth: 0; startX: 1; startY: 7; PathLine { x: 3; y: 7 } PathLine { x: 3; y: 9 } PathLine { x: 1; y: 9 } closed: true }
+            ShapePath { fillColor: !views.grid ? Theme.accent : Theme.ink4; strokeWidth: 0; startX: 5; startY: 7; PathLine { x: 14; y: 7 } PathLine { x: 14; y: 9 } PathLine { x: 5; y: 9 } closed: true }
+            ShapePath { fillColor: !views.grid ? Theme.accent : Theme.ink4; strokeWidth: 0; startX: 1; startY: 11; PathLine { x: 3; y: 11 } PathLine { x: 3; y: 13 } PathLine { x: 1; y: 13 } closed: true }
+            ShapePath { fillColor: !views.grid ? Theme.accent : Theme.ink4; strokeWidth: 0; startX: 5; startY: 11; PathLine { x: 14; y: 11 } PathLine { x: 14; y: 13 } PathLine { x: 5; y: 13 } closed: true }
+        }
+        MouseArea {
+            id: listArea
+            anchors.fill: parent
+            hoverEnabled: true
+            onClicked: views.gridPicked(false)
+        }
+    }
+    Rectangle {
+        x: 36; y: 3
+        width: 31; height: 32
+        radius: 6
+        color: views.grid ? Theme.accentBg : gridArea.containsMouse ? Theme.hover : "transparent"
+        Grid {
+            x: 9; y: 9
+            columns: 2
+            spacing: 2
+            Repeater {
+                model: 4
+                delegate: Rectangle { width: 5; height: 5; radius: 1.2; color: views.grid ? Theme.accent : Theme.ink4 }
+            }
+        }
+        MouseArea {
+            id: gridArea
+            anchors.fill: parent
+            hoverEnabled: true
+            onClicked: views.gridPicked(true)
+        }
+    }
+}

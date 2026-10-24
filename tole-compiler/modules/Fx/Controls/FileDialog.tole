@@ -12,6 +12,12 @@
 // What it takes is `acceptedTypes`, a pattern; a file it does not take is
 // shown dimmed (under "All files") and cannot be chosen, and the line at
 // its foot says why.
+//
+// It is a composition of the file controls a file manager uses too:
+// `ViewSwitch`, `UpButton`, `Breadcrumbs`, `SearchField`, `PlacesList`,
+// `FileListRow` and `FileTile`, `PatternHelp`, `FilePreview`,
+// `SegmentedBar` and `CloseButton`; what is left here is the dialog's
+// own: where each goes, the keys, and the line and buttons at its foot.
 import Fx
 
 component FileDialog : Popup {
@@ -116,115 +122,23 @@ component FileDialog : Popup {
         font: Theme.sans(17, 600)
         color: Theme.ink
     }
-    Rectangle {
+    CloseButton {
         x: dialog.width - 52; y: 14
-        width: 32; height: 32
-        radius: 8
-        color: closeArea.containsMouse ? Theme.hover : "transparent"
-        Shape {
-            ShapePath {
-                strokeColor: closeArea.containsMouse ? Theme.ink : Theme.ink4
-                strokeWidth: 1.6
-                startX: 11; startY: 11
-                PathLine { x: 21; y: 21 }
-            }
-            ShapePath {
-                strokeColor: closeArea.containsMouse ? Theme.ink : Theme.ink4
-                strokeWidth: 1.6
-                startX: 21; startY: 11
-                PathLine { x: 11; y: 21 }
-            }
-        }
-        MouseArea {
-            id: closeArea
-            anchors.fill: parent
-            hoverEnabled: true
-            onClicked: { dialog.rejected(); dialog.close() }
-        }
+        onClicked: { dialog.rejected(); dialog.close() }
     }
 
     // The tools: list or grid, Up, where it is, and the search.
-    Rectangle {
+    ViewSwitch {
         id: views
         x: 20; y: 58
-        width: 70; height: 38
-        radius: 8
-        color: Theme.bg2
-        border.width: 1
-        border.color: Theme.line
-        Rectangle {
-            x: 3; y: 3
-            width: 31; height: 32
-            radius: 6
-            color: !dialog.gridView ? Theme.accentBg : listViewArea.containsMouse ? Theme.hover : "transparent"
-            Shape {
-                x: 8; y: 8
-                ShapePath { fillColor: !dialog.gridView ? Theme.accent : Theme.ink4; strokeWidth: 0; startX: 1; startY: 3; PathLine { x: 3; y: 3 } PathLine { x: 3; y: 5 } PathLine { x: 1; y: 5 } closed: true }
-                ShapePath { fillColor: !dialog.gridView ? Theme.accent : Theme.ink4; strokeWidth: 0; startX: 5; startY: 3; PathLine { x: 14; y: 3 } PathLine { x: 14; y: 5 } PathLine { x: 5; y: 5 } closed: true }
-                ShapePath { fillColor: !dialog.gridView ? Theme.accent : Theme.ink4; strokeWidth: 0; startX: 1; startY: 7; PathLine { x: 3; y: 7 } PathLine { x: 3; y: 9 } PathLine { x: 1; y: 9 } closed: true }
-                ShapePath { fillColor: !dialog.gridView ? Theme.accent : Theme.ink4; strokeWidth: 0; startX: 5; startY: 7; PathLine { x: 14; y: 7 } PathLine { x: 14; y: 9 } PathLine { x: 5; y: 9 } closed: true }
-                ShapePath { fillColor: !dialog.gridView ? Theme.accent : Theme.ink4; strokeWidth: 0; startX: 1; startY: 11; PathLine { x: 3; y: 11 } PathLine { x: 3; y: 13 } PathLine { x: 1; y: 13 } closed: true }
-                ShapePath { fillColor: !dialog.gridView ? Theme.accent : Theme.ink4; strokeWidth: 0; startX: 5; startY: 11; PathLine { x: 14; y: 11 } PathLine { x: 14; y: 13 } PathLine { x: 5; y: 13 } closed: true }
-            }
-            MouseArea {
-                id: listViewArea
-                anchors.fill: parent
-                hoverEnabled: true
-                onClicked: dialog.gridView = false
-            }
-        }
-        Rectangle {
-            x: 36; y: 3
-            width: 31; height: 32
-            radius: 6
-            color: dialog.gridView ? Theme.accentBg : gridViewArea.containsMouse ? Theme.hover : "transparent"
-            Grid {
-                x: 9; y: 9
-                columns: 2
-                spacing: 2
-                Repeater {
-                    model: 4
-                    delegate: Rectangle { width: 5; height: 5; radius: 1.2; color: dialog.gridView ? Theme.accent : Theme.ink4 }
-                }
-            }
-            MouseArea {
-                id: gridViewArea
-                anchors.fill: parent
-                hoverEnabled: true
-                onClicked: dialog.gridView = true
-            }
-        }
+        grid: dialog.gridView
+        onGridPicked: dialog.gridView = on
     }
-    Rectangle {
+    UpButton {
         id: up
         x: 98; y: 58
-        width: 38; height: 38
-        radius: 8
-        color: upArea.containsMouse && entries.parentFolder != "" ? Theme.hover : Theme.bg2
-        border.width: 1
-        border.color: Theme.line
-        opacity: entries.parentFolder != "" ? 1 : 0.45
-        Shape {
-            ShapePath {
-                strokeColor: Theme.ink2
-                strokeWidth: 1.6
-                startX: 19; startY: 26
-                PathLine { x: 19; y: 12 }
-            }
-            ShapePath {
-                strokeColor: Theme.ink2
-                strokeWidth: 1.6
-                startX: 14; startY: 17
-                PathLine { x: 19; y: 12 }
-                PathLine { x: 24; y: 17 }
-            }
-        }
-        MouseArea {
-            id: upArea
-            anchors.fill: parent
-            hoverEnabled: true
-            onClicked: { if (entries.parentFolder != "") dialog.go(entries.parentFolder) }
-        }
+        canGo: entries.parentFolder != ""
+        onClicked: dialog.go(entries.parentFolder)
     }
     Rectangle {
         id: where
@@ -236,127 +150,22 @@ component FileDialog : Popup {
         border.width: 1
         border.color: Theme.line
         clip: true
-        Row {
+        Breadcrumbs {
             x: 10
             height: parent.height
-            spacing: 2
-            Repeater {
-                model: entries.crumbs
-                delegate: Row {
-                    height: 38
-                    spacing: 2
-                    Text {
-                        visible: index > 0
-                        height: 38
-                        text: "/"
-                        font: Theme.sans(13)
-                        color: Theme.ink5
-                    }
-                    Rectangle {
-                        y: 7
-                        width: crumbText.implicitWidth + 12
-                        height: 24
-                        radius: 5
-                        color: crumbArea.containsMouse ? Theme.hover : "transparent"
-                        Text {
-                            id: crumbText
-                            x: 6
-                            height: 24
-                            text: modelData.name
-                            font: Theme.sans(13, modelData.path == entries.path ? 500 : 400)
-                            color: modelData.path == entries.path ? Theme.ink : Theme.ink4
-                        }
-                        MouseArea {
-                            id: crumbArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            onClicked: dialog.go(modelData.path)
-                        }
-                    }
-                }
-            }
+            crumbs: entries.crumbs
+            current: entries.path
+            onCrumbClicked: dialog.go(to)
         }
     }
-    Rectangle {
-        id: searchBox
+    SearchField {
+        id: search
         x: dialog.width - 20 - 260; y: 58
-        width: 260; height: 38
-        radius: 8
-        color: dialog.searchError != "" ? Theme.redBg : Theme.bg2
-        border.width: search.activeFocus ? 2 : 1
-        border.color: dialog.searchError != "" ? Theme.redInk : search.activeFocus ? Theme.accent : Theme.line
-        TextInput {
-            id: search
-            x: 12; y: 0
-            width: parent.width - 52
-            height: 38
-            activeFocusOnTab: true
-            font: Theme.sans(13)
-            color: dialog.searchError != "" ? Theme.redInk : Theme.ink
-            cursorColor: Theme.ink
-            selectionColor: alpha(Theme.accent, 0.3)
-            onTextEdited: entries.currentIndex = -1
-            onAccepted: dialog.activate()
-        }
-        Text {
-            x: 12
-            height: 38
-            visible: search.text == ""
-            text: entries.filterMode == FolderListModel.Advanced ? "*.png | [image]" : entries.filterMode == FolderListModel.Regex ? "^id_.*$" : "Filter by name"
-            font: Theme.sans(13)
-            color: Theme.ink5
-        }
-        Rectangle {
-            id: modeButton
-            x: parent.width - 36; y: 7
-            width: 28; height: 24
-            radius: 5
-            color: entries.filterMode != FolderListModel.Basic ? Theme.accentBg : modeArea.containsMouse ? Theme.hover : "transparent"
-            Text {
-                anchors.centerIn: parent
-                text: entries.filterMode == FolderListModel.Advanced ? "*" : entries.filterMode == FolderListModel.Regex ? ".*" : "Aa"
-                font: Theme.sans(11, 700)
-                color: entries.filterMode != FolderListModel.Basic ? Theme.accent : Theme.ink4
-            }
-            MouseArea {
-                id: modeArea
-                anchors.fill: parent
-                hoverEnabled: true
-                onClicked: modes.open()
-            }
-        }
-        Menu {
-            id: modes
-            x: parent.width - 250; y: 42
-            width: 250
-            Repeater {
-                model: ["Basic", "Advanced", "Regex"]
-                delegate: Rectangle {
-                    width: 242
-                    height: 44
-                    radius: 5
-                    color: index == entries.filterMode ? Theme.accentBg : modeItem.containsMouse ? Theme.hover : "transparent"
-                    Text {
-                        x: 10; y: 6
-                        text: modelData
-                        font: Theme.sans(13, 500)
-                        color: Theme.ink
-                    }
-                    Text {
-                        x: 10; y: 24
-                        text: index == 0 ? "Name contains the text" : index == 1 ? "*.png, my?.txt, [image] | *.txt" : "A regular expression, ^id_.*$"
-                        font: Theme.sans(11)
-                        color: Theme.ink4
-                    }
-                    MouseArea {
-                        id: modeItem
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        onClicked: entries.filterMode = index
-                    }
-                }
-            }
-        }
+        error: dialog.searchError
+        mode: entries.filterMode
+        onTextEdited: entries.currentIndex = -1
+        onAccepted: dialog.activate()
+        onModePicked: entries.filterMode = picked
     }
 
     Rectangle { x: 0; y: 110; width: dialog.width; height: 1; color: Theme.line }
@@ -367,40 +176,11 @@ component FileDialog : Popup {
         x: 0; y: 111
         width: 180
         height: dialog.height - 111 - 120
-        Text {
-            x: 20; y: 14
-            text: "PLACES"
-            font: Theme.sans(11, 600)
-            color: Theme.ink4
-        }
-        Column {
-            x: 10; y: 38
-            width: 160
-            spacing: 2
-            Repeater {
-                model: dialog.placeNames
-                delegate: Rectangle {
-                    width: 160
-                    height: 32
-                    radius: 7
-                    color: entries.displayPath == dialog.placePaths[index] ? Theme.accentBg : placeArea.containsMouse ? Theme.hover : "transparent"
-                    Text {
-                        x: 10
-                        height: 32
-                        width: 140
-                        elide: Text.ElideRight
-                        text: modelData
-                        font: Theme.sans(13, entries.displayPath == dialog.placePaths[index] ? 500 : 400)
-                        color: entries.displayPath == dialog.placePaths[index] ? Theme.ink : Theme.ink2
-                    }
-                    MouseArea {
-                        id: placeArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        onClicked: dialog.go(dialog.placePaths[index])
-                    }
-                }
-            }
+        PlacesList {
+            names: dialog.placeNames
+            paths: dialog.placePaths
+            current: entries.displayPath
+            onPlaceClicked: dialog.go(to)
         }
         Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.line }
     }
@@ -427,34 +207,20 @@ component FileDialog : Popup {
                 width: parent.width - 18
                 height: parent.height - 40
                 model: entries.files
-                delegate: Rectangle {
+                delegate: FileListRow {
                     width: list.width
                     height: dialog.rowHeight
-                    radius: 7
-                    color: index == entries.currentIndex ? Theme.accentOver : row.containsMouse ? Theme.hover : "transparent"
                     opacity: index == entries.currentIndex || modelData.accepted ? (modelData.hidden ? 0.7 : 1) : 0.45
-                    FileIcon {
-                        x: 10; y: 8
-                        visible: !modelData.isImage
-                        kind: modelData.kind
-                        text: modelData.badge
-                    }
-                    Image {
-                        x: 10; y: 8
-                        width: 24; height: 18
-                        visible: modelData.isImage
-                        source: modelData.isImage ? modelData.path : ""
-                        fillMode: Image.PreserveAspectCrop
-                    }
-                    Text {
-                        x: 44
-                        width: (dialog.hasSelection ? list.width - 120 : list.width - 360)
-                        height: dialog.rowHeight
-                        elide: Text.ElideRight
-                        text: modelData.name
-                        font: Theme.sans(13, modelData.isDir ? 500 : 400)
-                        color: modelData.kind == "public" && index != entries.currentIndex ? Theme.ink3 : Theme.ink
-                    }
+                    name: modelData.name
+                    kind: modelData.kind
+                    badge: modelData.badge
+                    image: modelData.isImage ? modelData.path : ""
+                    isDir: modelData.isDir
+                    selected: index == entries.currentIndex
+                    nameWidth: dialog.hasSelection ? list.width - 120 : list.width - 360
+                    nameColor: modelData.kind == "public" && index != entries.currentIndex ? Theme.ink3 : Theme.ink
+                    onClicked: entries.currentIndex = index
+                    onDoubleClicked: { entries.currentIndex = index; dialog.activate() }
                     Text {
                         x: list.width - 308
                         width: 110
@@ -484,13 +250,6 @@ component FileDialog : Popup {
                         font: Theme.sans(12)
                         color: Theme.ink4
                     }
-                    MouseArea {
-                        id: row
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        onClicked: entries.currentIndex = index
-                        onDoubleClicked: { entries.currentIndex = index; dialog.activate() }
-                    }
                 }
             }
             ScrollBar {
@@ -517,54 +276,16 @@ component FileDialog : Popup {
                 spacing: 8
                 Repeater {
                     model: entries.files
-                    delegate: Rectangle {
-                        width: 116
-                        height: 112
-                        radius: 9
-                        color: index == entries.currentIndex ? Theme.accentOver : tile.containsMouse ? Theme.hover : "transparent"
+                    delegate: FileTile {
                         opacity: index == entries.currentIndex || modelData.accepted ? (modelData.hidden ? 0.7 : 1) : 0.45
-                        FileIcon {
-                            x: 30; y: 14
-                            width: 56; height: 44
-                            radius: 8
-                            fontSize: 12
-                            visible: !modelData.isImage
-                            kind: modelData.kind
-                            text: modelData.badge
-                        }
-                        Image {
-                            x: 10; y: 8
-                            width: 96; height: 64
-                            visible: modelData.isImage
-                            source: modelData.isImage ? modelData.path : ""
-                            fillMode: Image.PreserveAspectCrop
-                        }
-                        Text {
-                            x: 6; y: 74
-                            width: 104
-                            height: 18
-                            elide: Text.ElideRight
-                            horizontalAlignment: Text.AlignHCenter
-                            text: modelData.name
-                            font: Theme.sans(12, 500)
-                            color: Theme.ink
-                        }
-                        Text {
-                            x: 6; y: 92
-                            width: 104
-                            height: 14
-                            horizontalAlignment: Text.AlignHCenter
-                            text: modelData.sizeText
-                            font: Theme.sans(11)
-                            color: Theme.ink4
-                        }
-                        MouseArea {
-                            id: tile
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            onClicked: entries.currentIndex = index
-                            onDoubleClicked: { entries.currentIndex = index; dialog.activate() }
-                        }
+                        name: modelData.name
+                        kind: modelData.kind
+                        badge: modelData.badge
+                        image: modelData.isImage ? modelData.path : ""
+                        sizeText: modelData.sizeText
+                        selected: index == entries.currentIndex
+                        onClicked: entries.currentIndex = index
+                        onDoubleClicked: { entries.currentIndex = index; dialog.activate() }
                     }
                 }
             }
@@ -583,100 +304,28 @@ component FileDialog : Popup {
             color: Theme.ink4
         }
         // A search or a pattern that cannot be read, and how to write one.
-        Rectangle {
+        PatternHelp {
             x: 16; y: 48
             width: middle.width - 32
-            height: 168
             visible: dialog.searchError != "" || dialog.patternError != ""
-            radius: 9
-            color: Theme.redBg
-            border.width: 1
-            border.color: alpha(Theme.redInk, 0.4)
-            Text {
-                x: 14; y: 10
-                width: parent.width - 28
-                height: 22
-                elide: Text.ElideRight
-                text: dialog.searchError != "" ? "Search: ${dialog.searchError}" : dialog.patternError
-                font: Theme.sans(13, 500)
-                color: Theme.redInk
-            }
-            Grid {
-                x: 14; y: 40
-                columns: 2
-                columnSpacing: 18
-                rowSpacing: 6
-                Text { text: "*.png"; font: Theme.mono(12); color: Theme.ink }
-                Text { text: "Any text, then .png"; font: Theme.sans(12); color: Theme.ink3 }
-                Text { text: "my?.txt"; font: Theme.mono(12); color: Theme.ink }
-                Text { text: "? matches one character"; font: Theme.sans(12); color: Theme.ink3 }
-                Text { text: "a | b"; font: Theme.mono(12); color: Theme.ink }
-                Text { text: "Match either (or use a comma)"; font: Theme.sans(12); color: Theme.ink3 }
-                Text { text: "[kind]"; font: Theme.mono(12); color: Theme.ink }
-                Text { text: "image, private, public, text, archive, video, folder"; font: Theme.sans(12); color: Theme.ink3 }
-                Text { text: "^id_.*$"; font: Theme.mono(12); color: Theme.ink }
-                Text { text: "Regex mode in search"; font: Theme.sans(12); color: Theme.ink3 }
-            }
+            message: dialog.searchError != "" ? "Search: ${dialog.searchError}" : dialog.patternError
         }
     }
 
     // The preview of what is chosen.
-    Item {
+    FilePreview {
         id: preview
         visible: dialog.hasSelection
         x: dialog.width - 270; y: 111
         width: 270
         height: dialog.height - 111 - 120
-        Rectangle { width: 1; height: parent.height; color: Theme.line }
-        FileIcon {
-            x: 18; y: 18
-            width: 40; height: 34
-            radius: 7
-            fontSize: 10
-            kind: info.entry.kind
-            text: info.entry.badge
-        }
-        Text {
-            x: 68; y: 16
-            width: 186
-            height: 20
-            elide: Text.ElideRight
-            text: info.entry.name
-            font: Theme.sans(14, 600)
-            color: Theme.ink
-        }
-        Text {
-            x: 68; y: 36
-            text: info.entry.kindLabel
-            font: Theme.sans(12)
-            color: Theme.ink4
-        }
-        Image {
-            x: 1; y: 66
-            width: 269; height: 180
-            visible: info.entry.isImage
-            source: info.entry.isImage ? info.entry.path : ""
-            fillMode: Image.PreserveAspectCrop
-        }
-        Rectangle {
-            x: 14; y: 66
-            width: 242; height: 180
-            visible: !info.entry.isImage
-            radius: 8
-            color: Theme.bg2
-            border.width: 1
-            border.color: Theme.line
-            clip: true
-            TextEdit {
-                x: 10; y: 8
-                width: 222
-                readOnly: true
-                wrapMode: TextEdit.NoWrap
-                text: info.text != "" ? info.text : "No preview for this file."
-                font: Theme.mono(11)
-                color: info.entry.kind == "private" || info.text == "" ? Theme.ink4 : Theme.ink3
-            }
-        }
+        name: info.entry.name
+        kind: info.entry.kind
+        badge: info.entry.badge
+        kindLabel: info.entry.kindLabel
+        image: info.entry.isImage ? info.entry.path : ""
+        text: info.text != "" ? info.text : "No preview for this file."
+        textColor: info.entry.kind == "private" || info.text == "" ? Theme.ink4 : Theme.ink3
         GridLayout {
             x: 18; y: 262
             width: 236
@@ -695,43 +344,12 @@ component FileDialog : Popup {
 
     // The filter by type, hidden files, and the keys.
     Rectangle { x: 0; y: dialog.height - 120; width: dialog.width; height: 1; color: Theme.line }
-    Rectangle {
+    SegmentedBar {
         id: types
         x: 20; y: dialog.height - 106
-        width: typeRow.implicitWidth + 8
-        height: 34
-        radius: 8
-        color: Theme.bg2
-        border.width: 1
-        border.color: Theme.line
-        Row {
-            id: typeRow
-            x: 4; y: 4
-            spacing: 2
-            Repeater {
-                model: [dialog.acceptedLabel, "All files", "Custom"]
-                delegate: Rectangle {
-                    visible: index != 0 || dialog.acceptedTypes != ""
-                    width: typeText.implicitWidth + 20
-                    height: 26
-                    radius: 6
-                    color: dialog.typeFilter == index ? Theme.accentBg : typeArea.containsMouse ? Theme.hover : "transparent"
-                    Text {
-                        id: typeText
-                        anchors.centerIn: parent
-                        text: modelData
-                        font: Theme.sans(12, dialog.typeFilter == index ? 500 : 400)
-                        color: dialog.typeFilter == index ? Theme.accent : Theme.ink3
-                    }
-                    MouseArea {
-                        id: typeArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        onClicked: { dialog.typeFilter = index; entries.currentIndex = -1 }
-                    }
-                }
-            }
-        }
+        options: [dialog.acceptedTypes != "" ? dialog.acceptedLabel : "", "All files", "Custom"]
+        current: dialog.typeFilter
+        onPicked: { dialog.typeFilter = choice; entries.currentIndex = -1 }
     }
     TextField {
         id: pattern

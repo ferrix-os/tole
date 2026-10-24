@@ -1,0 +1,79 @@
+// What a file is, as the side of a file chooser or a file manager shows
+// the one chosen: a line between it and the files, its badge, name and
+// kind, then the picture itself or the start of its text in a box. What
+// goes under (its size, date, place; a manager's tags and actions) is
+// the use's own, from `bodyBottom` down.
+import Fx
+
+component FilePreview : Item {
+    id: preview
+    property string name
+    property string kind
+    property string badge
+    property string kindLabel
+    // A picture's path, shown in place of the text; "" for none.
+    property string image
+    property string text
+    property color textColor: Theme.ink3
+    // Where the name's line is, and how wide it may be.
+    property real top: 16
+    property real nameWidth: width - 84
+    // Where the picture or the text starts, and their heights.
+    property real bodyY: 66
+    property real imageHeight: 180
+    property real textHeight: 180
+    property real bodyBottom: bodyY + (image != "" ? imageHeight : textHeight)
+
+    width: 270
+
+    Rectangle { width: 1; height: preview.height; color: Theme.line }
+    FileIcon {
+        x: 18; y: preview.top + 2
+        width: 40; height: 34
+        radius: 7
+        fontSize: 10
+        kind: preview.kind
+        text: preview.badge
+    }
+    Text {
+        x: 68; y: preview.top
+        width: preview.nameWidth
+        height: 20
+        elide: Text.ElideRight
+        text: preview.name
+        font: Theme.sans(14, 600)
+        color: Theme.ink
+    }
+    Text {
+        x: 68; y: preview.top + 20
+        text: preview.kindLabel
+        font: Theme.sans(12)
+        color: Theme.ink4
+    }
+    Image {
+        x: 1; y: preview.bodyY
+        width: preview.width - 1; height: preview.imageHeight
+        visible: preview.image != ""
+        source: preview.image
+        fillMode: Image.PreserveAspectCrop
+    }
+    Rectangle {
+        x: 14; y: preview.bodyY
+        width: preview.width - 28; height: preview.textHeight
+        visible: preview.image == ""
+        radius: 8
+        color: Theme.bg2
+        border.width: 1
+        border.color: Theme.line
+        clip: true
+        TextEdit {
+            x: 10; y: 8
+            width: preview.width - 48
+            readOnly: true
+            wrapMode: TextEdit.NoWrap
+            text: preview.text
+            font: Theme.mono(11)
+            color: preview.textColor
+        }
+    }
+}

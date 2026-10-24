@@ -1198,6 +1198,291 @@ mod tests {
         );
     }
 
+    /// A root of `w` by `h` to put one control under, and a drawing of
+    /// the window, which lays it out.
+    fn stage(w: f32, h: f32) -> (tole::Ui, tole::handles::Item) {
+        let mut ui = tole::Ui::new(super::fonts());
+        let root = tole::handles::Item::new(&mut ui, None).expect("made");
+        root.common.width.set(&mut ui, w);
+        root.common.height.set(&mut ui, h);
+        (ui, root)
+    }
+
+    fn draw(ui: &mut tole::Ui) {
+        let _ = ui.render((1000, 700), tole::Color::TRANSPARENT);
+    }
+
+    /// The fill of the first `Rectangle` holding the `Text` that says
+    /// `label`.
+    fn fill_behind(ui: &mut tole::Ui, label: &str) -> tole::Color {
+        let mut at = super::find_text(ui, label);
+        while let Some(item) = at {
+            if let Some(rect) = ui.rectangle(item) {
+                return ui.get(rect.color);
+            }
+            at = ui.parent(item);
+        }
+        panic!("no rectangle behind {label}");
+    }
+
+    #[test]
+    fn the_search_field_says_a_mode_picked_and_shows_the_mode_it_is_given() {
+        use super::fx_controls::SearchFieldSignal;
+        let (mut ui, root) = stage(600.0, 400.0);
+        let field = super::fx_controls::SearchField::new(&mut ui, Some(root.id)).expect("made");
+        draw(&mut ui);
+        assert!(shown(&mut ui, "Filter by name"));
+        // Typing is said, and the placeholder goes.
+        super::press(&mut ui, "Filter by name", true).expect("clicked");
+        let _ = ui.take_signals();
+        type_text(&mut ui, "id_");
+        draw(&mut ui);
+        assert_eq!(&*ui.get(field.text), "id_");
+        assert!(!shown(&mut ui, "Filter by name"));
+        let said: Vec<SearchFieldSignal> = ui
+            .take_signals()
+            .iter()
+            .filter_map(|e| field.signal(e))
+            .collect();
+        assert_eq!(
+            said,
+            [
+                SearchFieldSignal::TextEdited,
+                SearchFieldSignal::TextEdited,
+                SearchFieldSignal::TextEdited
+            ]
+        );
+        // A mode picked from its menu is said, not taken: the owner sets it.
+        super::press(&mut ui, "Aa", true).expect("clicked");
+        draw(&mut ui);
+        super::press(&mut ui, "Advanced", true).expect("clicked");
+        let said: Vec<SearchFieldSignal> = ui
+            .take_signals()
+            .iter()
+            .filter_map(|e| field.signal(e))
+            .collect();
+        assert_eq!(said, [SearchFieldSignal::ModePicked(1)]);
+        assert_eq!(ui.get(field.mode), 0);
+        field.mode.set(&mut ui, 2);
+        field.text.set(&mut ui, String::new().into());
+        draw(&mut ui);
+        assert!(shown(&mut ui, ".*"), "the button names the mode");
+        assert!(shown(&mut ui, "^id_.*$"), "and so does the placeholder");
+        // A search that cannot be read turns it red.
+        let theme = super::fx_controls::Theme::instance(&mut ui);
+        let calm = ui.get(field.base.props.color);
+        assert_eq!(calm, ui.get(theme.bg2));
+        field.error.set(&mut ui, "unclosed group".into());
+        draw(&mut ui);
+        assert_eq!(ui.get(field.base.props.color), ui.get(theme.red_bg));
+    }
+
+    #[test]
+    fn breadcrumbs_name_the_crumb_clicked_and_mark_where_it_is() {
+        use super::fx_controls::BreadcrumbsSignal;
+        let (mut ui, root) = stage(600.0, 100.0);
+        let bar = super::fx_controls::Breadcrumbs::new(&mut ui, Some(root.id)).expect("made");
+        let crumbs = vec![
+            tole::FileEntry::named("~", "/home/me"),
+            tole::FileEntry::named("machines", "/home/me/machines"),
+            tole::FileEntry::named("keys", "/home/me/machines/keys"),
+        ];
+        bar.crumbs
+            .set(&mut ui, tole::ModelRc::new(tole::VecModel::new(crumbs)));
+        bar.current.set(&mut ui, "/home/me/machines/keys".into());
+        draw(&mut ui);
+        assert!(shown(&mut ui, "machines"));
+        let weight = |ui: &mut tole::Ui, label: &str| {
+            let item = super::find_text(ui, label).expect("crumb");
+            let text = ui.text(item).expect("text");
+            ui.get(text.font).weight
+        };
+        assert_eq!(weight(&mut ui, "keys"), 500);
+        assert_eq!(weight(&mut ui, "machines"), 400);
+        let _ = ui.take_signals();
+        super::press(&mut ui, "machines", true).expect("clicked");
+        let said: Vec<BreadcrumbsSignal> = ui
+            .take_signals()
+            .iter()
+            .filter_map(|e| bar.signal(e))
+            .collect();
+        assert_eq!(
+            said,
+            [BreadcrumbsSignal::CrumbClicked(
+                1,
+                "/home/me/machines".into()
+            )]
+        );
+    }
+
+    #[test]
+    fn places_tint_where_it_is_and_name_the_place_clicked() {
+        use super::fx_controls::PlacesListSignal;
+        let (mut ui, root) = stage(300.0, 400.0);
+        let places = super::fx_controls::PlacesList::new(&mut ui, Some(root.id)).expect("made");
+        places
+            .names
+            .set(&mut ui, vec!["Home".into(), "Keys".into()]);
+        places.paths.set(&mut ui, vec!["~".into(), "~/.ssh".into()]);
+        places.current.set(&mut ui, "~/.ssh".into());
+        draw(&mut ui);
+        assert!(shown(&mut ui, "PLACES"));
+        let theme = super::fx_controls::Theme::instance(&mut ui);
+        assert_eq!(fill_behind(&mut ui, "Keys"), ui.get(theme.accent_bg));
+        assert_eq!(fill_behind(&mut ui, "Home"), tole::Color::TRANSPARENT);
+        let _ = ui.take_signals();
+        super::press(&mut ui, "Home", true).expect("clicked");
+        let said: Vec<PlacesListSignal> = ui
+            .take_signals()
+            .iter()
+            .filter_map(|e| places.signal(e))
+            .collect();
+        assert_eq!(said, [PlacesListSignal::PlaceClicked(0, "~".into())]);
+    }
+
+    #[test]
+    fn a_file_row_and_a_tile_say_clicks_and_show_a_picture_or_a_badge() {
+        use super::fx_controls::{FileListRowSignal, FileTileSignal};
+        let (mut ui, root) = stage(600.0, 400.0);
+        let row = super::fx_controls::FileListRow::new(&mut ui, Some(root.id)).expect("made");
+        row.base.common.width.set(&mut ui, 500.0);
+        row.name.set(&mut ui, "id_ed25519".into());
+        row.badge.set(&mut ui, "KEY".into());
+        row.kind.set(&mut ui, "private".into());
+        row.name_width.set(&mut ui, 300.0);
+        draw(&mut ui);
+        assert!(shown(&mut ui, "KEY"), "no picture: the badge");
+        // The name ends where its width does; a mark after it goes there.
+        assert_eq!(ui.get(row.name_end), 344.0);
+        let narrow = ui.get(row.name_implicit_width);
+        assert!(narrow > 0.0 && narrow < 300.0);
+        let theme = super::fx_controls::Theme::instance(&mut ui);
+        row.selected.set(&mut ui, true);
+        draw(&mut ui);
+        assert_eq!(ui.get(row.base.props.color), ui.get(theme.accent_over));
+        let _ = ui.take_signals();
+        for _ in 0..2 {
+            super::press(&mut ui, "id_ed25519", true).expect("clicked");
+        }
+        let said: Vec<FileListRowSignal> = ui
+            .take_signals()
+            .iter()
+            .filter_map(|e| row.signal(e))
+            .collect();
+        assert_eq!(
+            said,
+            [
+                FileListRowSignal::Clicked,
+                FileListRowSignal::DoubleClicked,
+                FileListRowSignal::Clicked
+            ]
+        );
+        // A picture in place of the badge.
+        row.image.set(&mut ui, "/nowhere.png".into());
+        draw(&mut ui);
+        assert!(!shown(&mut ui, "KEY"));
+
+        let tile = super::fx_controls::FileTile::new(&mut ui, Some(root.id)).expect("made");
+        tile.base.common.y.set(&mut ui, 100.0);
+        tile.name.set(&mut ui, "notes.txt".into());
+        tile.size_text.set(&mut ui, "3 KB".into());
+        tile.badge.set(&mut ui, "TXT".into());
+        draw(&mut ui);
+        assert!(shown(&mut ui, "TXT") && shown(&mut ui, "3 KB"));
+        let _ = ui.take_signals();
+        super::press(&mut ui, "notes.txt", true).expect("clicked");
+        let said: Vec<FileTileSignal> = ui
+            .take_signals()
+            .iter()
+            .filter_map(|e| tile.signal(e))
+            .collect();
+        assert_eq!(said, [FileTileSignal::Clicked]);
+    }
+
+    #[test]
+    fn a_preview_shows_a_picture_or_text_and_says_where_it_ends() {
+        let (mut ui, root) = stage(400.0, 500.0);
+        let preview = super::fx_controls::FilePreview::new(&mut ui, Some(root.id)).expect("made");
+        preview.base.common.height.set(&mut ui, 400.0);
+        preview.name.set(&mut ui, "notes.txt".into());
+        preview.kind_label.set(&mut ui, "Text".into());
+        preview.text.set(&mut ui, "first line".into());
+        draw(&mut ui);
+        assert!(shown(&mut ui, "notes.txt") && shown(&mut ui, "Text"));
+        assert!(super::find_input(&mut ui, "first line").is_some());
+        assert_eq!(ui.get(preview.body_bottom), 66.0 + 180.0);
+        preview.image.set(&mut ui, "/nowhere.png".into());
+        preview.image_height.set(&mut ui, 200.0);
+        draw(&mut ui);
+        assert_eq!(ui.get(preview.body_bottom), 66.0 + 200.0);
+    }
+
+    #[test]
+    fn the_pattern_help_says_why_over_the_syntax() {
+        let (mut ui, root) = stage(600.0, 300.0);
+        let help = super::fx_controls::PatternHelp::new(&mut ui, Some(root.id)).expect("made");
+        help.base.common.width.set(&mut ui, 560.0);
+        help.message.set(&mut ui, "Search: unclosed group".into());
+        draw(&mut ui);
+        assert!(shown(&mut ui, "Search: unclosed group"));
+        assert!(shown(&mut ui, "? matches one character"));
+    }
+
+    #[test]
+    fn the_small_tools_say_what_was_pressed_and_change_nothing_themselves() {
+        use super::fx_controls::{
+            CloseButtonSignal, SegmentedBarSignal, UpButtonSignal, ViewSwitchSignal,
+        };
+        let (mut ui, root) = stage(600.0, 400.0);
+        let close = super::fx_controls::CloseButton::new(&mut ui, Some(root.id)).expect("made");
+        let views = super::fx_controls::ViewSwitch::new(&mut ui, Some(root.id)).expect("made");
+        views.base.common.x.set(&mut ui, 100.0);
+        let up = super::fx_controls::UpButton::new(&mut ui, Some(root.id)).expect("made");
+        up.base.common.x.set(&mut ui, 200.0);
+        let bar = super::fx_controls::SegmentedBar::new(&mut ui, Some(root.id)).expect("made");
+        bar.base.common.y.set(&mut ui, 100.0);
+        bar.options.set(
+            &mut ui,
+            vec!["".into(), "All files".into(), "Custom".into()],
+        );
+        bar.current.set(&mut ui, 1);
+        draw(&mut ui);
+        let _ = ui.take_signals();
+        super::click_at(&mut ui, 16.0, 16.0);
+        super::click_at(&mut ui, 100.0 + 50.0, 19.0);
+        super::click_at(&mut ui, 200.0 + 19.0, 19.0);
+        let signals = ui.take_signals();
+        let said = |f: &dyn Fn(&tole::Emitted) -> bool| signals.iter().filter(|e| f(e)).count();
+        assert_eq!(
+            said(&|e| close.signal(e) == Some(CloseButtonSignal::Clicked)),
+            1
+        );
+        assert_eq!(
+            said(&|e| views.signal(e) == Some(ViewSwitchSignal::GridPicked(true))),
+            1
+        );
+        assert!(!ui.get(views.grid), "the owner sets it");
+        assert_eq!(said(&|e| up.signal(e) == Some(UpButtonSignal::Clicked)), 1);
+        // Nowhere to go: a press says nothing.
+        up.can_go.set(&mut ui, false);
+        draw(&mut ui);
+        super::click_at(&mut ui, 200.0 + 19.0, 19.0);
+        assert!(ui.take_signals().iter().all(|e| up.signal(e).is_none()));
+        // An empty choice is left out; a press names the choice's index.
+        assert!(super::find_text(&mut ui, "All files").is_some());
+        super::press(&mut ui, "Custom", true).expect("clicked");
+        let picked: Vec<SegmentedBarSignal> = ui
+            .take_signals()
+            .iter()
+            .filter_map(|e| bar.signal(e))
+            .collect();
+        assert_eq!(picked, [SegmentedBarSignal::Picked(2)]);
+        assert_eq!(ui.get(bar.current), 1);
+        let all = super::find_text(&mut ui, "All files").expect("shown");
+        let first = ui.rect_of(all).expect("laid out");
+        assert!(first.x < 40.0, "the empty choice takes no room: {first:?}");
+    }
+
     #[test]
     fn every_demo_draws_something() {
         for demo in &DEMOS {

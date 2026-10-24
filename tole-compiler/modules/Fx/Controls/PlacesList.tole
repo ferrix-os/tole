@@ -1,0 +1,38 @@
+// The places down the side of a file chooser: a title over a row a
+// place, the one it is in tinted. `names` and `paths` go together (`~`
+// written for home, as `FolderListModel.displayPath` writes it), and
+// `current` is where it is, written the same way.
+// `placeClicked(index, to)` names the place and its path.
+import Fx
+
+component PlacesList : Item {
+    id: places
+    property string title: "PLACES"
+    property list<string> names
+    property list<string> paths
+    property string current
+    signal placeClicked(int index, string to)
+
+    width: 180
+
+    Text {
+        x: 20; y: 14
+        text: places.title
+        font: Theme.sans(11, 600)
+        color: Theme.ink4
+    }
+    Column {
+        x: 10; y: 38
+        width: places.width - 20
+        spacing: 2
+        Repeater {
+            model: places.names
+            delegate: PlaceRow {
+                width: places.width - 20
+                text: modelData
+                active: places.current == places.paths[index]
+                onClicked: places.placeClicked(index, places.paths[index])
+            }
+        }
+    }
+}

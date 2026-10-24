@@ -1,0 +1,67 @@
+// One file as a tile of a grid: its picture or a large badge, its name
+// and its size under it. Tinted while `selected`; `clicked()` and
+// `doubleClicked()` say what the pointer did.
+import Fx
+
+component FileTile : Rectangle {
+    id: tile
+    property string name
+    property string kind
+    property string badge
+    // A picture's path, shown in place of the badge; "" for none.
+    property string image
+    property string sizeText
+    property bool selected: false
+    // Where the name goes; the size is under it.
+    property real nameY: 74
+    signal clicked()
+    signal doubleClicked()
+
+    width: 116
+    height: 112
+    radius: 9
+    color: selected ? Theme.accentOver : area.containsMouse ? Theme.hover : "transparent"
+
+    FileIcon {
+        x: (tile.width - 56) / 2; y: 14
+        width: 56; height: 44
+        radius: 8
+        fontSize: 12
+        visible: tile.image == ""
+        kind: tile.kind
+        text: tile.badge
+    }
+    Image {
+        x: (tile.width - 96) / 2; y: 8
+        width: 96; height: 64
+        visible: tile.image != ""
+        source: tile.image
+        fillMode: Image.PreserveAspectCrop
+    }
+    Text {
+        x: 6; y: tile.nameY
+        width: tile.width - 12
+        height: 18
+        elide: Text.ElideRight
+        horizontalAlignment: Text.AlignHCenter
+        text: tile.name
+        font: Theme.sans(12, 500)
+        color: Theme.ink
+    }
+    Text {
+        x: 6; y: tile.nameY + 18
+        width: tile.width - 12
+        height: 14
+        horizontalAlignment: Text.AlignHCenter
+        text: tile.sizeText
+        font: Theme.sans(11)
+        color: Theme.ink4
+    }
+    MouseArea {
+        id: area
+        anchors.fill: parent
+        hoverEnabled: true
+        onClicked: tile.clicked()
+        onDoubleClicked: tile.doubleClicked()
+    }
+}

@@ -1,0 +1,106 @@
+// A search over names in three modes, as the file chooser and a file
+// manager search a folder: Basic (the name contains the text), Advanced
+// (a pattern, `*.png | my?.txt | [image]`) and Regex (a regular
+// expression). The button at its end opens the modes; a search that
+// cannot be read (`error`) turns the field red.
+//
+// `mode` is what is shown and is never set from inside: a pick says
+// `modePicked(picked)`, and whoever owns the search sets it (as
+// `FolderListModel.filterMode`, or a program's own setting).
+import Fx
+
+component SearchField : Rectangle {
+    id: field
+    property alias text: input.text
+    // 0 Basic, 1 Advanced, 2 Regex: `FolderListModel.Basic`, `Advanced`
+    // and `Regex`.
+    property int mode: 0
+    // Why the search cannot be read; "" when it can.
+    property string error
+    // The mode button's and the picked mode's background.
+    property color highlight: Theme.accentBg
+    property real menuWidth: 250
+    property bool focused: input.activeFocus
+    signal textEdited()
+    signal accepted()
+    signal modePicked(int picked)
+
+    width: 260
+    height: 38
+    radius: 8
+    color: field.error != "" ? Theme.redBg : Theme.bg2
+    border.width: input.activeFocus ? 2 : 1
+    border.color: field.error != "" ? Theme.redInk : input.activeFocus ? Theme.accent : Theme.line
+
+    TextInput {
+        id: input
+        x: 12; y: 0
+        width: field.width - 52
+        height: field.height
+        activeFocusOnTab: true
+        font: Theme.sans(13)
+        color: field.error != "" ? Theme.redInk : Theme.ink
+        cursorColor: Theme.ink
+        selectionColor: alpha(Theme.accent, 0.3)
+        onTextEdited: field.textEdited()
+        onAccepted: field.accepted()
+    }
+    Text {
+        x: 12
+        height: field.height
+        visible: input.text == ""
+        text: field.mode == 1 ? "*.png | [image]" : field.mode == 2 ? "^id_.*$" : "Filter by name"
+        font: Theme.sans(13)
+        color: Theme.ink5
+    }
+    Rectangle {
+        x: field.width - 36; y: (field.height - 24) / 2
+        width: 28; height: 24
+        radius: 5
+        color: field.mode != 0 ? field.highlight : modeArea.containsMouse ? Theme.hover : "transparent"
+        Text {
+            anchors.centerIn: parent
+            text: field.mode == 1 ? "*" : field.mode == 2 ? ".*" : "Aa"
+            font: Theme.sans(11, 700)
+            color: field.mode != 0 ? Theme.accent : Theme.ink4
+        }
+        MouseArea {
+            id: modeArea
+            anchors.fill: parent
+            hoverEnabled: true
+            onClicked: modes.open()
+        }
+    }
+    Menu {
+        id: modes
+        x: field.width - field.menuWidth; y: field.height + 4
+        width: field.menuWidth
+        Repeater {
+            model: ["Basic", "Advanced", "Regex"]
+            delegate: Rectangle {
+                width: field.menuWidth - 8
+                height: 44
+                radius: 5
+                color: index == field.mode ? field.highlight : modeItem.containsMouse ? Theme.hover : "transparent"
+                Text {
+                    x: 10; y: 6
+                    text: modelData
+                    font: Theme.sans(13, 500)
+                    color: Theme.ink
+                }
+                Text {
+                    x: 10; y: 24
+                    text: index == 0 ? "Name contains the text" : index == 1 ? "*.png, my?.txt, [image] | *.txt" : "A regular expression, ^id_.*$"
+                    font: Theme.sans(11)
+                    color: Theme.ink4
+                }
+                MouseArea {
+                    id: modeItem
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: field.modePicked(index)
+                }
+            }
+        }
+    }
+}

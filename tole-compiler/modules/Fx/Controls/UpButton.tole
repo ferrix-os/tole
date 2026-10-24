@@ -1,0 +1,38 @@
+// Up to the folder above: an arrow in a box, faded while there is none
+// (`canGo` false), when a press says nothing.
+import Fx
+
+component UpButton : Rectangle {
+    id: button
+    property bool canGo: true
+    signal clicked()
+
+    width: 38; height: 38
+    radius: 8
+    color: area.containsMouse && canGo ? Theme.hover : Theme.bg2
+    border.width: 1
+    border.color: Theme.line
+    opacity: canGo ? 1 : 0.45
+
+    Shape {
+        ShapePath {
+            strokeColor: Theme.ink2
+            strokeWidth: 1.6
+            startX: 19; startY: 26
+            PathLine { x: 19; y: 12 }
+        }
+        ShapePath {
+            strokeColor: Theme.ink2
+            strokeWidth: 1.6
+            startX: 14; startY: 17
+            PathLine { x: 19; y: 12 }
+            PathLine { x: 24; y: 17 }
+        }
+    }
+    MouseArea {
+        id: area
+        anchors.fill: parent
+        hoverEnabled: true
+        onClicked: { if (button.canGo) button.clicked() }
+    }
+}

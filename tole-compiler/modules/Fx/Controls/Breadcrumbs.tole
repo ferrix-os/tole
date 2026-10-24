@@ -1,0 +1,54 @@
+// Where a folder is, as the folders above it: `~ / machines / keys`,
+// each a button to go there, the one it is in drawn stronger. `crumbs`
+// is as a `FolderListModel`'s `crumbs` gives them (a name and a path
+// each, from the top); `current` is the path of the one it is in.
+// `crumbClicked(index, to)` names the crumb and its path.
+import Fx
+
+component Breadcrumbs : Row {
+    id: bar
+    property model<FileEntry> crumbs
+    property string current
+    // The space either side of a crumb's name.
+    property real padding: 6
+    signal crumbClicked(int index, string to)
+
+    height: 38
+    spacing: 2
+
+    Repeater {
+        model: bar.crumbs
+        delegate: Row {
+            height: bar.height
+            spacing: 2
+            Text {
+                visible: index > 0
+                height: bar.height
+                text: "/"
+                font: Theme.sans(13)
+                color: Theme.ink5
+            }
+            Rectangle {
+                y: (bar.height - 24) / 2
+                width: crumbText.implicitWidth + 2 * bar.padding
+                height: 24
+                radius: 5
+                color: crumbArea.containsMouse ? Theme.hover : "transparent"
+                Text {
+                    id: crumbText
+                    x: bar.padding
+                    height: 24
+                    text: modelData.name
+                    font: Theme.sans(13, modelData.path == bar.current ? 500 : 400)
+                    color: modelData.path == bar.current ? Theme.ink : Theme.ink4
+                }
+                MouseArea {
+                    id: crumbArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: bar.crumbClicked(index, modelData.path)
+                }
+            }
+        }
+    }
+}

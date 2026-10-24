@@ -1,0 +1,41 @@
+// A search or a pattern that cannot be read, and how to write one: why
+// (`message`) over the pattern syntax `FolderListModel` and `Search`
+// read, on red.
+import Fx
+
+component PatternHelp : Rectangle {
+    id: help
+    property string message
+
+    height: 168
+    radius: 9
+    color: Theme.redBg
+    border.width: 1
+    border.color: alpha(Theme.redInk, 0.4)
+
+    Text {
+        x: 14; y: 10
+        width: help.width - 28
+        height: 22
+        elide: Text.ElideRight
+        text: help.message
+        font: Theme.sans(13, 500)
+        color: Theme.redInk
+    }
+    Grid {
+        x: 14; y: 40
+        columns: 2
+        columnSpacing: 18
+        rowSpacing: 6
+        Text { text: "*.png"; font: Theme.mono(12); color: Theme.ink }
+        Text { text: "Any text, then .png"; font: Theme.sans(12); color: Theme.ink3 }
+        Text { text: "my?.txt"; font: Theme.mono(12); color: Theme.ink }
+        Text { text: "? matches one character"; font: Theme.sans(12); color: Theme.ink3 }
+        Text { text: "a | b"; font: Theme.mono(12); color: Theme.ink }
+        Text { text: "Match either (or use a comma)"; font: Theme.sans(12); color: Theme.ink3 }
+        Text { text: "[kind]"; font: Theme.mono(12); color: Theme.ink }
+        Text { text: "image, private, public, text, archive, video, folder"; font: Theme.sans(12); color: Theme.ink3 }
+        Text { text: "^id_.*$"; font: Theme.mono(12); color: Theme.ink }
+        Text { text: "Regex mode in search"; font: Theme.sans(12); color: Theme.ink3 }
+    }
+}

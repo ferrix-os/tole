@@ -1,0 +1,58 @@
+// One place down the side of a file chooser or a file manager: its name,
+// what it holds at its end (`detail`, a size, a count), drawn stronger
+// and tinted while it is where one is. A use's children go before the
+// name, as a mark (an icon, a tag's dot); `textX` is where the name
+// starts then.
+import Fx
+
+component PlaceRow : Rectangle {
+    id: place
+    property string text
+    property string detail
+    property bool active: false
+    // The background while it is where one is.
+    property color highlight: Theme.accentBg
+    property color ink: Theme.ink2
+    property color activeInk: Theme.ink
+    // The name in a heavier weight while active.
+    property bool strong: true
+    property real textX: 10
+    property real textWidth: width - textX - 10
+    default property alias content: mark
+    signal clicked()
+
+    width: 160
+    height: 32
+    radius: 7
+    color: active ? highlight : area.containsMouse ? Theme.hover : "transparent"
+
+    Item {
+        id: mark
+        width: place.width
+        height: place.height
+    }
+    Text {
+        x: place.textX
+        width: place.textWidth
+        height: place.height
+        elide: Text.ElideRight
+        text: place.text
+        font: Theme.sans(13, place.strong && place.active ? 500 : 400)
+        color: place.active ? place.activeInk : place.ink
+    }
+    Text {
+        visible: place.detail != ""
+        anchors.right: parent.right
+        anchors.rightMargin: 10
+        height: place.height
+        text: place.detail
+        font: Theme.sans(11)
+        color: Theme.ink5
+    }
+    MouseArea {
+        id: area
+        anchors.fill: parent
+        hoverEnabled: true
+        onClicked: place.clicked()
+    }
+}
