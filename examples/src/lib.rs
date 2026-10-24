@@ -678,7 +678,37 @@ pub fn render(demo: &Demo, scale: f32) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEMOS, render};
+    use super::{DEMOS, keys_line, render};
+
+    /// What the `tole-demo` boot does by QEMU's keys, done headless: the
+    /// combo box's list opened by Space takes the keys, and Escape gives
+    /// them back to the box.
+    #[test]
+    fn the_combo_box_list_takes_the_keys_and_gives_them_back() {
+        let demo = DEMOS
+            .iter()
+            .find(|d| d.name == "controls-light")
+            .expect("the demo");
+        let mut ui = tole::Ui::new(super::fonts());
+        let root = (demo.make)(&mut ui).expect("made");
+        root.width.set(&mut ui, 700.0);
+        root.height.set(&mut ui, 520.0);
+        ui.set_window_active(true);
+        ui.update();
+        let key = |ui: &mut tole::Ui, name: &str| {
+            let _ = ui.key_press(&tole::KeyEvent::named(name));
+            ui.update();
+        };
+        assert!(keys_line(&mut ui).starts_with("keys on a text field"));
+        for _ in 0..4 {
+            key(&mut ui, "Tab");
+        }
+        assert_eq!(keys_line(&mut ui), "keys on an item; 0 popups open");
+        key(&mut ui, "space");
+        assert_eq!(keys_line(&mut ui), "keys on a popup; 1 popups open");
+        key(&mut ui, "Escape");
+        assert_eq!(keys_line(&mut ui), "keys on an item; 0 popups open");
+    }
 
     #[test]
     fn the_screenshots_are_what_the_demos_draw() {

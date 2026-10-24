@@ -694,8 +694,8 @@ first while it is shown, placed from its parent but outside any cut
 around it. A press outside closes it (and does nothing else, so the
 press that closes a menu clicks nothing under it), as Escape does; a
 `Menu` also closes once an item is clicked. A `ComboBox` opens its list
-in one. A modal popup, or one given `focus: true`, takes the keys when
-it opens; however a popup closes -- `close()`, Escape, a press outside,
+in one. A modal popup takes the keys when it opens, and a combo box's
+list is given them; however a popup closes -- `close()`, Escape, a press outside,
 its `visible` set or the popup destroyed -- the keys go back to where
 they were, if they were still inside it. A `SplitView` places its children as a `RowLayout` does, and
 the handle between two drags the first one's `Layout.preferredWidth`.

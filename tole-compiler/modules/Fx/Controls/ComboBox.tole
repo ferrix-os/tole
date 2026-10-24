@@ -21,7 +21,7 @@ component ComboBox : Rectangle {
     border.width: activeFocus ? 2 : 1
     border.color: activeFocus ? Theme.accent : Theme.line3
 
-    Keys.onSpacePressed: list.open()
+    Keys.onSpacePressed: { list.open(); list.forceActiveFocus() }
     Keys.onUpPressed: if (currentIndex > 0) { currentIndex = currentIndex - 1; activated(currentIndex) }
     Keys.onDownPressed: if (currentIndex < model.length - 1) { currentIndex = currentIndex + 1; activated(currentIndex) }
 
@@ -51,13 +51,12 @@ component ComboBox : Rectangle {
         id: area
         anchors.fill: parent
         hoverEnabled: true
-        onClicked: list.open()
+        onClicked: { list.open(); list.forceActiveFocus() }
     }
     // It takes the keys while open, as Qt's does: Up and Down still reach
     // the box around it, and Escape gives them back.
     Popup {
         id: list
-        focus: true
         y: combo.height + 4
         width: combo.width
         height: entries.implicitHeight + 8

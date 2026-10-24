@@ -2001,11 +2001,14 @@ fn a_popup_gives_the_keys_back_however_it_closes() {
     let inner = crate::handles::TextInput::new(&mut ui, Some(popup.id)).unwrap();
     inner.common.width.set(&mut ui, 100.0);
     inner.common.height.set(&mut ui, 30.0);
-    // One given `focus` takes the keys when it opens, though not modal.
+    // One given the keys as it opens, though not modal, as a combo box's
+    // list is.
     popup.common.visible.set(&mut ui, false);
-    popup.common.focus.set(&mut ui, true);
     ui.open_popup(popup.id);
-    assert!(!ui.get(input.common.active_focus));
+    assert!(
+        ui.get(input.common.active_focus),
+        "not modal: the keys stay"
+    );
     ui.force_active_focus(inner.id);
     // Hidden by its `visible`, not `close()`: the field has them again.
     popup.common.visible.set(&mut ui, false);
@@ -2018,7 +2021,6 @@ fn a_popup_gives_the_keys_back_however_it_closes() {
     assert!(!ui.get(popup.common.visible));
     assert!(ui.get(input.common.active_focus));
     // A popup that never had the keys leaves them where they are.
-    popup.common.focus.set(&mut ui, false);
     ui.open_popup(popup.id);
     assert!(ui.get(input.common.active_focus));
     ui.close_popup(popup.id);

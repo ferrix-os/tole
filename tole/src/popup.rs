@@ -39,9 +39,12 @@ impl Ui {
         }
     }
 
-    /// Show the `Popup` `item`. A modal one, or one given `focus`, takes
-    /// the keys, as a dialog does; whichever it is, the keys go back to
-    /// where they were when it closes, if they are inside it then.
+    /// Show the `Popup` `item`. A modal one takes the keys, as a dialog
+    /// does, and any other can be given them (`forceActiveFocus()`, as a
+    /// combo box's list is); whichever it is, the keys go back to where
+    /// they were when it closes, if they are inside it then. (`focus` is
+    /// not asked: it says where the keys are within a scope, which the
+    /// first field to take them turns off.)
     pub fn open_popup(&mut self, item: ItemId) {
         let Some(props) = self.popup(item) else {
             return;
@@ -57,7 +60,7 @@ impl Ui {
         let before = self.active_focus_item();
         self.focus.before_popup.retain(|(p, _)| *p != item);
         self.focus.before_popup.push((item, before));
-        if self.get(props.modal) || self.get(common.focus) {
+        if self.get(props.modal) {
             self.force_active_focus(item);
         }
     }
