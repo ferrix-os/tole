@@ -104,6 +104,14 @@ impl Ui {
         self.rehover();
     }
 
+    /// Where the pointer is in the window, logical pixels; `None` while it
+    /// is not over it: what a panel that opens under the pointer and closes
+    /// when it goes asks.
+    #[must_use]
+    pub fn pointer_at(&self) -> Option<(f32, f32)> {
+        self.input.at
+    }
+
     /// The pointer left the window.
     pub fn pointer_leave(&mut self) {
         self.update();
