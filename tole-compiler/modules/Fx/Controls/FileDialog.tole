@@ -9,6 +9,9 @@
 // up, Escape cancels.
 //
 // `accepted(path)` when a file is chosen, `rejected()` when it is not.
+// With `saving`, the foot takes a name instead (`saveName`), as a desktop
+// portal's SaveFile asks: every file is shown, picking one takes its name,
+// and `accepted` gives the folder shown with the name in it.
 // What it takes is `acceptedTypes`, a pattern; a file it does not take is
 // shown dimmed (under "All files") and cannot be chosen, and the line at
 // its foot says why.
@@ -38,6 +41,9 @@ component FileDialog : Popup {
     property list<string> placePaths: ["~", "~/Documents", "~/Downloads", "~/Pictures"]
     // The main button's text for a file.
     property string openLabel: "Open"
+    // Saving: a name typed at the foot, in the folder shown.
+    property bool saving: false
+    property alias saveName: nameField.text
     // 0: what it accepts; 1: all files; 2: the pattern below.
     property int typeFilter: acceptedTypes == "" ? 1 : 0
     property alias customPattern: pattern.text
@@ -48,7 +54,7 @@ component FileDialog : Popup {
     property string selectedFile: !hasSelection || entries.current.isDir ? "" : entries.current.path
     property string selectedName: hasSelection ? entries.current.name : ""
     property bool hasSelection: entries.currentIndex >= 0 && entries.current.path != ""
-    property bool canOpen: hasSelection && (entries.current.isDir || entries.current.accepted)
+    property bool canOpen: saving ? (hasSelection && entries.current.isDir) || nameField.text != "" : hasSelection && (entries.current.isDir || entries.current.accepted)
     property string searchError: entries.filterError
     property string patternError: typeFilter == 2 ? entries.acceptError : ""
     property real rowHeight: 34
@@ -58,7 +64,14 @@ component FileDialog : Popup {
     signal go(string to)
 
     onActivate: {
-        if (dialog.hasSelection) {
+        if (dialog.saving) {
+            if (dialog.hasSelection && entries.current.isDir && nameField.text == "") {
+                dialog.go(entries.current.path)
+            } else if (nameField.text != "") {
+                dialog.accepted("${entries.folder}/${nameField.text}")
+                dialog.close()
+            }
+        } else if (dialog.hasSelection) {
             if (entries.current.isDir) {
                 dialog.go(entries.current.path)
             } else if (entries.current.accepted) {
@@ -96,7 +109,7 @@ component FileDialog : Popup {
     FolderListModel {
         id: entries
         accept: dialog.typeFilter == 2 ? dialog.customPattern : dialog.acceptedTypes
-        acceptedOnly: dialog.typeFilter != 1
+        acceptedOnly: !dialog.saving && dialog.typeFilter != 1
         nameFilter: search.text
     }
     FileInfo {
@@ -219,8 +232,8 @@ component FileDialog : Popup {
                     selected: index == entries.currentIndex
                     nameWidth: dialog.hasSelection ? list.width - 120 : list.width - 360
                     nameColor: modelData.kind == "public" && index != entries.currentIndex ? Theme.ink3 : Theme.ink
-                    onClicked: entries.currentIndex = index
-                    onDoubleClicked: { entries.currentIndex = index; dialog.activate() }
+                    onClicked: { entries.currentIndex = index; if (dialog.saving && !modelData.isDir) { nameField.text = modelData.name } }
+                    onDoubleClicked: { entries.currentIndex = index; if (dialog.saving && !modelData.isDir) { nameField.text = modelData.name }; dialog.activate() }
                     Text {
                         x: list.width - 308
                         width: 110
@@ -284,8 +297,8 @@ component FileDialog : Popup {
                         image: modelData.isImage ? modelData.path : ""
                         sizeText: modelData.sizeText
                         selected: index == entries.currentIndex
-                        onClicked: entries.currentIndex = index
-                        onDoubleClicked: { entries.currentIndex = index; dialog.activate() }
+                        onClicked: { entries.currentIndex = index; if (dialog.saving && !modelData.isDir) { nameField.text = modelData.name } }
+                        onDoubleClicked: { entries.currentIndex = index; if (dialog.saving && !modelData.isDir) { nameField.text = modelData.name }; dialog.activate() }
                     }
                 }
             }
@@ -381,16 +394,35 @@ component FileDialog : Popup {
 
     // What is chosen, what it is, and the two buttons.
     Rectangle { x: 0; y: dialog.height - 62; width: dialog.width; height: 1; color: Theme.line }
+    // Saving: the name, in the folder shown.
+    Text {
+        visible: dialog.saving
+        x: 20; y: dialog.height - 46
+        height: 30
+        text: "Name"
+        font: Theme.sans(13, 500)
+        color: Theme.ink4
+    }
+    TextField {
+        id: nameField
+        visible: dialog.saving
+        x: 70; y: dialog.height - 48
+        width: dialog.width - 400
+        height: 34
+        placeholderText: "File name"
+        onAccepted: dialog.activate()
+    }
     FileIcon {
         x: 20; y: dialog.height - 46
         width: 34; height: 30
         radius: 6
         fontSize: 9
-        visible: dialog.hasSelection
+        visible: !dialog.saving && dialog.hasSelection
         kind: info.entry.kind
         text: info.entry.badge
     }
     Text {
+        visible: !dialog.saving
         x: dialog.hasSelection ? 64 : 20
         y: dialog.height - 50
         width: dialog.width - 320
@@ -401,6 +433,7 @@ component FileDialog : Popup {
         color: dialog.hasSelection ? Theme.ink : Theme.ink4
     }
     Text {
+        visible: !dialog.saving
         x: dialog.hasSelection ? 64 : 20
         y: dialog.height - 30
         width: dialog.width - 320
@@ -424,7 +457,7 @@ component FileDialog : Popup {
             onClicked: { dialog.rejected(); dialog.close() }
         }
         Button {
-            text: dialog.hasSelection && entries.current.isDir ? "Open folder" : dialog.openLabel
+            text: dialog.hasSelection && entries.current.isDir && !(dialog.saving && nameField.text != "") ? "Open folder" : dialog.openLabel
             height: 34
             highlighted: true
             enabled: dialog.canOpen
