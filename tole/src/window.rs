@@ -688,7 +688,7 @@ impl Window {
     fn adopt_gpu(&mut self) {
         if !self
             .starting
-            .as_ref()
+            .as_mut()
             .is_some_and(|(pending, _)| pending.ready())
         {
             return;

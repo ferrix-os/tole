@@ -149,10 +149,20 @@ impl Gpu {
 
 /// A device being made on a thread of its own (a driver's first start can
 /// take over a second), while the window draws on the CPU.
+///
+/// The thread sends what it made, then wakes the window's loop: the loop
+/// asks the channel, never whether the thread has ended, since a thread
+/// that has woken it can still be returning -- and the loop, finding it
+/// not done, then slept until something else woke it (the demo's GPU boot
+/// on a loaded host, 2026-10-25).
 #[derive(Debug)]
 pub struct Pending {
-    /// The thread making it.
-    thread: Option<std::thread::JoinHandle<Result<device::Core, String>>>,
+    /// What the thread made, once it sends it.
+    made: std::sync::mpsc::Receiver<Result<device::Core, String>>,
+    /// What came, kept between [`Pending::ready`] and [`Pending::finish`].
+    got: Option<Result<device::Core, String>>,
+    /// Whether the thread could be started at all.
+    started: bool,
 }
 
 impl Gpu {
@@ -166,25 +176,40 @@ impl Gpu {
         wake: Box<dyn FnOnce() + Send>,
     ) -> Pending {
         let wanted = std::env::var("TOLE_GPU_DEVICE").ok();
-        let thread = std::thread::Builder::new()
+        let (send, made) = std::sync::mpsc::channel();
+        let started = std::thread::Builder::new()
             .name("tole-gpu".to_owned())
             .spawn(move || {
-                let made = device::Core::new(hardware_only, wanted, near);
+                let core = device::Core::new(hardware_only, wanted, near);
+                let _ = send.send(core);
                 wake();
-                made
             })
-            .ok();
-        Pending { thread }
+            .is_ok();
+        Pending {
+            made,
+            got: None,
+            started,
+        }
     }
 }
 
 impl Pending {
-    /// Whether the thread is done.
+    /// Whether the device is made, or refused.
     #[must_use]
-    pub fn ready(&self) -> bool {
-        self.thread
-            .as_ref()
-            .is_none_or(std::thread::JoinHandle::is_finished)
+    pub fn ready(&mut self) -> bool {
+        if !self.started {
+            return true;
+        }
+        if self.got.is_none() {
+            match self.made.try_recv() {
+                Ok(made) => self.got = Some(made),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.got = Some(Err("the thread making the device failed".to_owned()));
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        self.got.is_some()
     }
 
     /// The device, finished on this thread, or why there is none.
@@ -193,13 +218,16 @@ impl Pending {
     ///
     /// The device could not be made.
     pub fn finish(mut self) -> Result<Gpu, String> {
-        let thread = self
-            .thread
-            .take()
-            .ok_or_else(|| "no thread to make the device".to_owned())?;
-        let core = thread
-            .join()
-            .map_err(|_| "the thread making the device failed".to_owned())??;
+        if !self.started {
+            return Err("no thread to make the device".to_owned());
+        }
+        let core = match self.got.take() {
+            Some(made) => made,
+            None => self
+                .made
+                .recv()
+                .map_err(|_| "the thread making the device failed".to_owned())?,
+        }?;
         device::Gpu::from_core(core).map(|inner| Gpu {
             inner: Rc::new(RefCell::new(inner)),
         })
