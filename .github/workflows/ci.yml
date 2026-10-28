@@ -42,8 +42,14 @@ jobs:
         with:
           repository: ferrix-os/ferrix
           ref: develop
+          # The compositor's workspace, and the libraries hyprix reaches by
+          # path: tests/decorations.rs runs hyprix, headless, in a thread.
           sparse-checkout: |
             src/user/system/linux/compositor
+            src/lib/init/svc-proto
+            src/lib/kernel/fbtext
+            src/lib/proto/linux-abi
+            src/lib/proto/lode-capture
             assets/fonts/inter
       - uses: actions/checkout@v6
         with:

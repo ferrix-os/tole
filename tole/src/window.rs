@@ -60,6 +60,26 @@ pub struct WindowOptions {
     /// rather than a toplevel; `title` and `min_size` are then unused, and
     /// `size` is what the compositor fills in where the options say 0.
     pub layer: Option<LayerOptions>,
+    /// Who the program would have draw its frame -- the title bar and its
+    /// minimize, maximize and close -- asked of the compositor through
+    /// `xdg-decoration`. The compositor decides; [`Window::draws_own_frame`]
+    /// says what it decided, and the toolkit's
+    /// [`compositor_toolkit::Event::Decorated`] when that changes.
+    pub decorations: Decorations,
+}
+
+/// Who a window asks to draw its frame ([`WindowOptions::decorations`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Decorations {
+    /// The compositor: its title bar over the window, which draws none of
+    /// its own. What every window asks unless it says otherwise.
+    #[default]
+    Server,
+    /// The program itself: its own header with its own buttons, which the
+    /// compositor leaves alone where it agrees (`client_side`) -- and
+    /// which the program shows only then, or where the compositor has no
+    /// decoration manager at all.
+    Client,
 }
 
 impl Default for WindowOptions {
@@ -73,6 +93,7 @@ impl Default for WindowOptions {
             resize_edges: false,
             clipboard: true,
             layer: None,
+            decorations: Decorations::Server,
         }
     }
 }
@@ -144,8 +165,6 @@ pub struct Window {
     /// The edge the pointer is over, as `xdg_toplevel.resize_edge`; 0
     /// none.
     edge: u32,
-    /// Whether it was asked to be maximized.
-    maximized: bool,
     /// The last key press's serial, which a program's own copy names.
     key_serial: u32,
     /// How the frames went.
@@ -398,6 +417,7 @@ impl Window {
                 app_id: options.app_id.clone(),
                 size: options.size,
                 min_size: options.min_size,
+                own_frame: Some(options.decorations == Decorations::Client),
                 ..ToplevelOptions::default()
             })?,
         };
@@ -425,7 +445,6 @@ impl Window {
             closed: false,
             opened: std::time::Instant::now(),
             edge: 0,
-            maximized: false,
             key_serial: 0,
             stats: FrameStats::default(),
         })
@@ -437,10 +456,11 @@ impl Window {
         self.client.drag_window(self.surface, 0);
     }
 
-    /// Maximize it, or give it back its own size.
+    /// Maximize it, or give it back its own size: from what the
+    /// compositor last said it is, so a window maximized by a key or by the
+    /// compositor's own bar is restored by the program's button.
     pub fn toggle_maximized(&mut self) {
-        self.maximized = !self.maximized;
-        let state = if self.maximized {
+        let state = if !self.client.is_maximized(self.surface) {
             compositor_toolkit::WindowState::Maximized
         } else {
             compositor_toolkit::WindowState::Restored
@@ -463,6 +483,24 @@ impl Window {
     /// popover's room above a dock -- lets the pointer through elsewhere.
     pub fn set_input_region(&mut self, region: Option<&[compositor_toolkit::Rect]>) {
         self.client.set_input_region(self.surface, region);
+    }
+
+    /// Whether the program draws its own frame -- its title bar, the
+    /// window's minimize, maximize and close, and moving the window by its
+    /// header (`xdg_toplevel.move`): true where the compositor answered
+    /// `client_side`, or has no decoration manager, so no frame but the
+    /// program's would be drawn. False until the compositor's first answer,
+    /// and wherever it draws the frame itself. A program shows its own
+    /// buttons only while this is true.
+    #[must_use]
+    pub fn draws_own_frame(&self) -> bool {
+        self.options.layer.is_none() && self.client.own_frame(self.surface) == Some(true)
+    }
+
+    /// Whether the compositor says the window is maximized.
+    #[must_use]
+    pub fn is_maximized(&self) -> bool {
+        self.client.is_maximized(self.surface)
     }
 
     /// Minimize it.
@@ -741,7 +779,7 @@ impl Window {
                 if ours(surface) =>
             {
                 if self.options.resize_edges {
-                    let (edge, shape) = if self.maximized {
+                    let (edge, shape) = if self.client.is_maximized(self.surface) {
                         (0, CursorShape::Default)
                     } else {
                         edge_at(x as f32, y as f32, self.size.unwrap_or((1, 1)))
