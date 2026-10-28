@@ -25,7 +25,8 @@
 //! compositor's to read when it returns.
 
 // A static program has the renderer's types but never a device, so most
-// of it is never reached there.
+// of it is never reached there; without a window (`wayland`), the targets
+// a window draws into are never made.
 #![cfg_attr(
     target_env = "musl",
     allow(
@@ -33,6 +34,10 @@
         unused_imports,
         reason = "a static program never has a device"
     )
+)]
+#![cfg_attr(
+    not(feature = "wayland"),
+    allow(dead_code, reason = "without a window, its targets are never made")
 )]
 
 mod atlas;
