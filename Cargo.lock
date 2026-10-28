@@ -54,12 +54,64 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
+name = "compositor-anim"
+version = "0.1.0"
+dependencies = [
+ "compositor-config",
+]
+
+[[package]]
+name = "compositor-config"
+version = "0.1.0"
+dependencies = [
+ "compositor-regex",
+]
+
+[[package]]
+name = "compositor-drm"
+version = "0.1.0"
+dependencies = [
+ "compositor-seat",
+ "compositor-virgl",
+ "ferrix-linux-abi",
+ "libc",
+]
+
+[[package]]
+name = "compositor-evecho"
+version = "0.1.0"
+dependencies = [
+ "compositor-seat",
+ "ferrix-linux-abi",
+ "libc",
+]
+
+[[package]]
+name = "compositor-fan"
+version = "0.1.0"
+
+[[package]]
 name = "compositor-image"
 version = "0.1.0"
 dependencies = [
  "resvg",
  "tiny-skia",
  "zune-jpeg",
+]
+
+[[package]]
+name = "compositor-ipc"
+version = "0.1.0"
+dependencies = [
+ "compositor-config",
+ "compositor-layout",
+]
+
+[[package]]
+name = "compositor-layout"
+version = "0.1.0"
+dependencies = [
+ "compositor-config",
 ]
 
 [[package]]
@@ -72,6 +124,35 @@ dependencies = [
 [[package]]
 name = "compositor-regex"
 version = "0.1.0"
+
+[[package]]
+name = "compositor-render"
+version = "0.1.0"
+dependencies = [
+ "compositor-config",
+ "compositor-fan",
+ "compositor-layout",
+ "compositor-virgl",
+ "tiny-skia",
+]
+
+[[package]]
+name = "compositor-seat"
+version = "0.1.0"
+dependencies = [
+ "compositor-socket",
+ "compositor-wire",
+ "libc",
+]
+
+[[package]]
+name = "compositor-server"
+version = "0.1.0"
+dependencies = [
+ "compositor-protocol",
+ "compositor-wire",
+ "compositor-xkb",
+]
 
 [[package]]
 name = "compositor-shm"
@@ -108,6 +189,13 @@ dependencies = [
  "compositor-xkb",
  "libc",
  "tiny-skia",
+]
+
+[[package]]
+name = "compositor-virgl"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -161,6 +249,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferrix-fbtext"
+version = "0.1.0"
+
+[[package]]
+name = "ferrix-linux-abi"
+version = "0.1.0"
+
+[[package]]
+name = "ferrix-lode-capture"
+version = "0.1.0"
+
+[[package]]
+name = "ferrix-svc-proto"
+version = "0.1.0"
+
+[[package]]
 name = "flate2"
 version = "1.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -176,6 +280,33 @@ name = "float-cmp"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
+
+[[package]]
+name = "hyprix"
+version = "0.1.0"
+dependencies = [
+ "compositor-anim",
+ "compositor-config",
+ "compositor-drm",
+ "compositor-evecho",
+ "compositor-ipc",
+ "compositor-layout",
+ "compositor-protocol",
+ "compositor-regex",
+ "compositor-render",
+ "compositor-seat",
+ "compositor-server",
+ "compositor-socket",
+ "compositor-text",
+ "compositor-virgl",
+ "compositor-wire",
+ "compositor-xkb",
+ "ferrix-fbtext",
+ "ferrix-linux-abi",
+ "ferrix-lode-capture",
+ "ferrix-svc-proto",
+ "libc",
+]
 
 [[package]]
 name = "imagesize"
@@ -418,6 +549,7 @@ dependencies = [
  "compositor-regex",
  "compositor-text",
  "compositor-toolkit",
+ "hyprix",
  "miniz_oxide 0.8.9",
  "tiny-skia",
 ]

@@ -49,5 +49,16 @@ ash = { version = "=0.38.0", default-features = false, features = ["loaded", "de
 [target.'cfg(target_env = "musl")'.dependencies]
 ash = { version = "=0.38.0", default-features = false, features = ["debug", "std"], optional = true }
 
+[dev-dependencies]
+# The compositor, run in a thread of a test, so a window's decorations are
+# tried against the server it meets on Ferrix rather than a mock.
+hyprix = { path = "../../compositor/hyprix" }
+
+# A window against the compositor: only with the window backend.
+[[test]]
+name = "decorations"
+path = "tests/decorations.rs"
+required-features = ["wayland"]
+
 [lints]
 workspace = true
