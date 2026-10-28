@@ -159,17 +159,19 @@ fn rank(kind: vk::PhysicalDeviceType) -> u32 {
 }
 
 /// A DRM device number's major and minor: a render or primary node.
-pub(crate) type Node = (u32, u32);
+pub type Node = (u32, u32);
 
 /// The device itself: made where making it may take long -- a driver's
 /// first start, NVIDIA's over a second -- on a thread of its own, then
 /// given to the [`Gpu`] that draws with it. Every field is a Vulkan
 /// handle or a plain value, so it crosses threads.
-pub(crate) struct Core {
+pub struct Core {
     /// The loader.
     entry: ash::Entry,
     /// The instance.
     instance: ash::Instance,
+    /// The physical device the logical one was made on.
+    physical: vk::PhysicalDevice,
     /// The logical device.
     device: ash::Device,
     /// Its graphics queue.
@@ -215,13 +217,111 @@ impl Drop for Core {
     }
 }
 
+/// A device for a renderer other than tole's own: the compositor's
+/// helper (`hyprix-gpu`) takes the device tole picks -- the same choice of
+/// GPU, the same extensions for dmabufs and host memory -- and draws with
+/// pipelines of its own on it. Everything it makes on the device it must
+/// destroy before the `Core` is dropped, which destroys the device.
+impl Core {
+    /// The loader.
+    #[must_use]
+    pub const fn entry(&self) -> &ash::Entry {
+        &self.entry
+    }
+
+    /// The instance.
+    #[must_use]
+    pub const fn instance(&self) -> &ash::Instance {
+        &self.instance
+    }
+
+    /// The physical device.
+    #[must_use]
+    pub const fn physical(&self) -> vk::PhysicalDevice {
+        self.physical
+    }
+
+    /// The logical device: Vulkan 1.3, dynamic rendering and
+    /// synchronization2 on.
+    #[must_use]
+    pub const fn device(&self) -> &ash::Device {
+        &self.device
+    }
+
+    /// Its graphics queue.
+    #[must_use]
+    pub const fn queue(&self) -> vk::Queue {
+        self.queue
+    }
+
+    /// That queue's family.
+    #[must_use]
+    pub const fn family(&self) -> u32 {
+        self.family
+    }
+
+    /// The device's name, as Vulkan gives it.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Whether it draws on the processor (lavapipe).
+    #[must_use]
+    pub const fn is_software(&self) -> bool {
+        self.software
+    }
+
+    /// A memory type among `bits` with `flags`.
+    #[must_use]
+    pub fn memory_type(&self, bits: u32, flags: vk::MemoryPropertyFlags) -> Option<u32> {
+        let count = usize::try_from(self.memory.memory_type_count).unwrap_or(0);
+        self.memory
+            .memory_types
+            .iter()
+            .take(count)
+            .enumerate()
+            .find(|(index, kind)| bits & (1 << index) != 0 && kind.property_flags.contains(flags))
+            .and_then(|(index, _)| u32::try_from(index).ok())
+    }
+
+    /// `VK_KHR_external_memory_fd`, when the device also has
+    /// `VK_EXT_external_memory_dma_buf` and
+    /// `VK_EXT_image_drm_format_modifier`, all three enabled.
+    #[must_use]
+    pub const fn dmabuf(&self) -> Option<&ash::khr::external_memory_fd::Device> {
+        self.dmabuf.as_ref()
+    }
+
+    /// The single-plane DRM format modifiers it draws BGRA8 into.
+    #[must_use]
+    pub fn drawn_modifiers(&self) -> &[u64] {
+        &self.modifiers
+    }
+
+    /// `VK_EXT_external_memory_host`, enabled, and the alignment an
+    /// imported pointer and size need.
+    #[must_use]
+    pub const fn host_import(&self) -> Option<(&ash::ext::external_memory_host::Device, u64)> {
+        match &self.host_import {
+            Some(host) => Some((host, self.host_align)),
+            None => None,
+        }
+    }
+}
+
 impl Core {
     /// Load Vulkan and make a device: on the compositor's own when `near`
     /// names its node and a device sits there, else a discrete GPU, then
     /// an integrated one, then any; the one whose name holds `wanted` when
     /// given. `hardware_only` refuses a CPU device.
+    ///
+    /// # Errors
+    ///
+    /// Why there is none: no Vulkan library (always, in a static program),
+    /// no device, or none with Vulkan 1.3.
     #[cfg(target_env = "musl")]
-    pub(crate) fn new(
+    pub fn new(
         _hardware_only: bool,
         _wanted: Option<String>,
         _near: Option<Node>,
@@ -230,8 +330,12 @@ impl Core {
     }
 
     /// As above.
+    ///
+    /// # Errors
+    ///
+    /// As above.
     #[cfg(not(target_env = "musl"))]
-    pub(crate) fn new(
+    pub fn new(
         hardware_only: bool,
         wanted: Option<String>,
         near: Option<Node>,
@@ -445,6 +549,7 @@ impl Core {
         Ok(Core {
             entry,
             instance,
+            physical,
             device,
             queue,
             family,

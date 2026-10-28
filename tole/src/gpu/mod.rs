@@ -50,6 +50,7 @@ use compositor_text::Fonts;
 use crate::render::Rect;
 use crate::value::Color;
 
+pub use device::{Core, Node};
 pub use frame::GpuRenderer;
 pub use target::Target;
 
@@ -158,9 +159,9 @@ impl Gpu {
 #[derive(Debug)]
 pub struct Pending {
     /// What the thread made, once it sends it.
-    made: std::sync::mpsc::Receiver<Result<device::Core, String>>,
+    made: std::sync::mpsc::Receiver<Result<Core, String>>,
     /// What came, kept between [`Pending::ready`] and [`Pending::finish`].
-    got: Option<Result<device::Core, String>>,
+    got: Option<Result<Core, String>>,
     /// Whether the thread could be started at all.
     started: bool,
 }
@@ -180,7 +181,7 @@ impl Gpu {
         let started = std::thread::Builder::new()
             .name("tole-gpu".to_owned())
             .spawn(move || {
-                let core = device::Core::new(hardware_only, wanted, near);
+                let core = Core::new(hardware_only, wanted, near);
                 let _ = send.send(core);
                 wake();
             })
