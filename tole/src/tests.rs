@@ -2334,3 +2334,79 @@ mod gpu {
         let _ = std::fs::remove_dir_all(&scratch);
     }
 }
+
+/// A factory of rows 20 high, 100 wide, each a rectangle whose fill is
+/// red while the pointer hovers it (a `MouseArea` over it, hover on) and
+/// white otherwise: a file list's row.
+fn hover_row_factory() -> crate::DelegateFactory {
+    Rc::new(move |ui: &mut Ui, parent| {
+        let r = crate::handles::Rectangle::new(ui, Some(parent))?;
+        let (row, index) = ui.delegate_cells(r.id);
+        r.common.height.set(ui, 20.0);
+        r.common.width.set(ui, 100.0);
+        let a = area(ui, r.id, (0.0, 0.0, 100.0, 20.0));
+        a.props.hover_enabled.set(ui, true);
+        let hovered = a.props.contains_mouse;
+        r.props.color.bind(ui, move |ui| {
+            if ui.get(hovered) {
+                Color::hex(0xff_00_00)
+            } else {
+                Color::hex(0xff_ff_ff)
+            }
+        });
+        Some(crate::Delegate {
+            root: r.id,
+            row,
+            index,
+        })
+    })
+}
+
+/// A click that changes a list's rows (a file selected) recycles its
+/// delegates while the pointer stays still: the delegate the pointer
+/// hovered may be given another row. Only the row under the pointer is
+/// drawn hovered after it, in the tree and in the picture, and not the
+/// row the hovered delegate now shows. Seen in shelf on the v0.2.0
+/// candidate (2026-10-28): a row the pointer had crossed kept its hover
+/// after a click on another, until the pointer next moved.
+#[test]
+fn a_list_whose_rows_change_under_a_still_pointer_hovers_only_the_row_under_it() {
+    let mut ui = bare();
+    let view = crate::handles::ListView::new(&mut ui, None).unwrap();
+    view.common.width.set(&mut ui, 100.0);
+    view.common.height.set(&mut ui, 200.0);
+    ui.set_view_delegates(view.id, vec![hover_row_factory()], None);
+    let model = Rc::new(crate::VecModel::new((0..10).collect::<Vec<i32>>()));
+    let shared: Rc<dyn crate::Model<Row = i32>> = model.clone();
+    view.props.model.set(
+        &mut ui,
+        crate::ModelSource::model(crate::ModelRc::from_rc(shared)),
+    );
+    ui.update();
+    let red_rows = |ui: &mut Ui| -> Vec<u32> {
+        let frame = ui.render((100, 200), Color::hex(0x00_00_00)).unwrap();
+        (0..10)
+            .filter(|row| {
+                let p = frame.pixel(50, row * 20 + 10).unwrap();
+                (p.red(), p.green(), p.blue()) == (255, 0, 0)
+            })
+            .collect()
+    };
+    // The pointer crosses rows 2 and 3 to 7.
+    for row in [2.0, 3.0, 7.0] {
+        ui.pointer_move(50.0, row * 20.0 + 10.0);
+        ui.update();
+    }
+    assert_eq!(red_rows(&mut ui), [7], "the row under the pointer");
+    // A click there changes the rows, as a selection does, and the
+    // pointer does not move.
+    ui.pointer_press();
+    ui.pointer_release();
+    model.set_vec((0..10).map(|n| n + 100).collect());
+    ui.update();
+    assert_eq!(
+        red_rows(&mut ui),
+        [7],
+        "after the rows changed, still only the row under the pointer"
+    );
+}

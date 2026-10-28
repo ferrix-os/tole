@@ -453,6 +453,9 @@ fn release(ui: &mut Ui, state: &mut ViewState, row: usize) {
     let Some((kind, delegate)) = state.shown.remove(&row) else {
         return;
     };
+    // The pointer's area may be in it: looked for again once the rows
+    // are placed.
+    ui.delegate_released();
     if state.pool.iter().filter(|(k, _)| *k == kind).count() >= POOL_MAX {
         ui.destroy(delegate.root);
         return;

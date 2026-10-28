@@ -87,6 +87,10 @@ pub(crate) struct Input {
     /// A `SplitView` handle being dragged: the child before it, its size
     /// when the press came, and where the press was along the split.
     split: Option<(ItemId, f32, f32)>,
+    /// A view gave a delegate back to its pool since the pointer was last
+    /// looked under: the area it hovers may now show another row, or be
+    /// hidden, while the pointer has not moved ([`Ui::delegate_released`]).
+    recycled: bool,
 }
 
 impl Ui {
@@ -233,6 +237,24 @@ impl Ui {
     /// window to set.
     pub fn take_cursor(&mut self) -> Option<Cursor> {
         core::mem::take(&mut self.input.cursor_changed).then_some(self.input.cursor)
+    }
+
+    /// A view gave a delegate back to its pool: what is under the pointer
+    /// is looked for again at the end of the next [`Ui::update`]. The
+    /// hovered area may have been that delegate's, and is then given
+    /// another row -- a click that changed the rows (a selection) left the
+    /// row it now shows hovered, whatever the pointer was over, until the
+    /// pointer next moved (shelf on the v0.2.0 candidate, 2026-10-28).
+    pub(crate) fn delegate_released(&mut self) {
+        self.input.recycled = true;
+    }
+
+    /// Look under the pointer again if a view recycled a delegate: called
+    /// once the update has made and placed the rows.
+    pub(crate) fn rehover_if_recycled(&mut self) {
+        if core::mem::take(&mut self.input.recycled) {
+            self.rehover();
+        }
     }
 
     /// Forget `item` if the pointer held or hovered it.

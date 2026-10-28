@@ -279,6 +279,7 @@ impl Ui {
         if !self.focus.before_popup.is_empty() {
             self.popups_hidden();
         }
+        self.rehover_if_recycled();
     }
 
     /// The scale frames are drawn at: buffer pixels to a logical one.
