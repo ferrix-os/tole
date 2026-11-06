@@ -18,10 +18,8 @@ impl Image {
         if rgba.len() != pixmap.data().len() {
             return None;
         }
-        for (out, pixel) in pixmap.pixels_mut().iter_mut().zip(rgba.chunks_exact(4)) {
-            if let [r, g, b, a] = *pixel {
-                *out = tiny_skia::ColorU8::from_rgba(r, g, b, a).premultiply();
-            }
+        for (out, &[r, g, b, a]) in pixmap.pixels_mut().iter_mut().zip(rgba.as_chunks::<4>().0) {
+            *out = tiny_skia::ColorU8::from_rgba(r, g, b, a).premultiply();
         }
         Some(Image(Rc::new(pixmap)))
     }

@@ -56,7 +56,7 @@ impl Fenwick {
             if let Some(slot) = tree.get_mut(at) {
                 *slot += v;
             }
-            let up = at + (at & at.wrapping_neg());
+            let up = at + at.isolate_lowest_one();
             let here = tree.get(at).copied().unwrap_or(0.0);
             if let Some(slot) = tree.get_mut(up) {
                 *slot += here;
@@ -73,7 +73,7 @@ impl Fenwick {
     /// A row more at the end.
     fn push(&mut self, value: f64) {
         let at = self.values.len() + 1;
-        let low = at & at.wrapping_neg();
+        let low = at.isolate_lowest_one();
         // The new node covers (at - low, at]: its own value and the sums
         // of the rows before it that it covers.
         let covered = self.prefix(at - 1) - self.prefix(at - low);
@@ -91,7 +91,7 @@ impl Fenwick {
         let mut at = index + 1;
         while let Some(slot) = self.tree.get_mut(at) {
             *slot += delta;
-            at += at & at.wrapping_neg();
+            at += at.isolate_lowest_one();
         }
     }
 
@@ -101,7 +101,7 @@ impl Fenwick {
         let mut sum = 0.0;
         while at > 0 {
             sum += self.tree.get(at).copied().unwrap_or(0.0);
-            at -= at & at.wrapping_neg();
+            at -= at.isolate_lowest_one();
         }
         sum
     }

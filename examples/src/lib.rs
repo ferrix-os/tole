@@ -720,7 +720,13 @@ pub fn difference(a: &[u8], b: &[u8], width: usize, tolerance: u8) -> Difference
     let width = width.max(1);
     let height = a.len() / 4 / width;
     let pixel = |x: usize, y: usize| a.get((y * width + x) * 4..(y * width + x) * 4 + 4);
-    for (i, (p, q)) in a.chunks_exact(4).zip(b.chunks_exact(4)).enumerate() {
+    for (i, (p, q)) in a
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(b.as_chunks::<4>().0)
+        .enumerate()
+    {
         let most = p
             .iter()
             .zip(q)

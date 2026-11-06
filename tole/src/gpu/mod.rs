@@ -334,12 +334,13 @@ fn read_back(gpu: &device::Gpu, (w, h): (u32, u32)) -> Result<tiny_skia::Pixmap,
     let bytes = unsafe { std::slice::from_raw_parts(buffer.ptr.cast_const(), len) };
     for (out, bgra) in pixmap
         .data_mut()
-        .chunks_exact_mut(4)
-        .zip(bytes.chunks_exact(4))
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip(bytes.as_chunks::<4>().0)
     {
-        if let ([r, g, b, a], [bb, gg, rr, aa]) = (out, bgra) {
-            (*r, *g, *b, *a) = (*rr, *gg, *bb, *aa);
-        }
+        let &[b, g, r, a] = bgra;
+        *out = [r, g, b, a];
     }
     Ok(pixmap)
 }

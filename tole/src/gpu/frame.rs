@@ -1025,8 +1025,10 @@ fn coverage_of(
     Some(
         pixmap
             .data()
-            .chunks_exact(4)
-            .map(|p| p.get(3).copied().unwrap_or(0))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&[_, _, _, alpha]| alpha)
             .collect(),
     )
 }

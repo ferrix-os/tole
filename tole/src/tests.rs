@@ -771,8 +771,10 @@ fn a_kept_frame_redraws_only_what_changed_and_matches_a_whole_one() {
         let whole = ui.render((200, 120), Color::hex(0xff_ff_ff)).unwrap();
         let differing = whole
             .data()
-            .chunks_exact(4)
-            .zip(frame.pixmap().data().chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(frame.pixmap().data().as_chunks::<4>().0)
             .filter(|(a, b)| a != b)
             .count();
         assert_eq!(
@@ -2194,8 +2196,10 @@ mod gpu {
     /// How many pixels differ at all, and the largest difference.
     fn compare(a: &[u8], b: &[u8]) -> (usize, u8) {
         let differing = a
-            .chunks_exact(4)
-            .zip(b.chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(b.as_chunks::<4>().0)
             .filter(|(p, q)| p != q)
             .count();
         let worst = a.iter().zip(b).map(|(x, y)| x.abs_diff(*y)).max();

@@ -630,9 +630,10 @@ pub(crate) fn feedback(client: &mut Client) -> (Feedback, Vec<Event>) {
                         if let Some(Value::Array(bytes)) = args.first() {
                             indices.extend(
                                 bytes
-                                    .chunks_exact(2)
-                                    .filter_map(|b| b.try_into().ok())
-                                    .map(u16::from_ne_bytes),
+                                    .as_chunks::<2>()
+                                    .0
+                                    .iter()
+                                    .map(|b| u16::from_ne_bytes(*b)),
                             );
                         }
                     }

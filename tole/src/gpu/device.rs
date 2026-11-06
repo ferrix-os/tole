@@ -1142,9 +1142,10 @@ impl Parts {
 /// SPIR-V bytes as the words a shader module takes.
 fn words(bytes: &[u8]) -> Vec<u32> {
     bytes
-        .chunks_exact(4)
-        .filter_map(|w| <[u8; 4]>::try_from(w).ok())
-        .map(u32::from_le_bytes)
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|w| u32::from_le_bytes(*w))
         .collect()
 }
 

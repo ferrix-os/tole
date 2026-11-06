@@ -67,10 +67,8 @@ fn deflate(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
     let mut raw = Vec::with_capacity((row + 1) * height as usize);
     for line in pixels.chunks_exact(row.max(1)).take(height as usize) {
         raw.push(0);
-        for pixel in line.chunks_exact(4) {
-            if let [r, g, b, a] = *pixel {
-                raw.extend(unpremultiply([r, g, b, a]));
-            }
+        for &pixel in line.as_chunks::<4>().0 {
+            raw.extend(unpremultiply(pixel));
         }
     }
     miniz_oxide::deflate::compress_to_vec_zlib(&raw, 6)
